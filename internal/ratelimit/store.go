@@ -96,7 +96,7 @@ func (g *globalStore) withKey(key string, now time.Time, fn func(evs []event) []
 	st := g.read()
 	evs := prune(st.Events[key], now)
 	st.Events[key] = fn(evs)
-	if err := g.write(st); err != nil {
+	if err := g.write(st, now); err != nil {
 		slog.Warn("ratelimit: ghi store thất bại, fail-open (không chặn sáng tác)", "key", key, "err", err)
 		return err
 	}
@@ -126,7 +126,20 @@ func (g *globalStore) read() persisted {
 	return st
 }
 
-func (g *globalStore) write(st persisted) error {
+// write prune MỌI key trong st theo now trước khi ghi (không chỉ key đang truy cập) —
+// key hết hạn (model đổi tên, key test random, dự án bỏ dùng...) sẽ không sống mãi
+// trong file, tránh ratelimit.json phình đơn điệu theo thời gian. Key có event list
+// rỗng sau prune bị xoá hẳn khỏi map thay vì giữ lại slice rỗng.
+func (g *globalStore) write(st persisted, now time.Time) error {
+	for k, evs := range st.Events {
+		pruned := prune(evs, now)
+		if len(pruned) == 0 {
+			delete(st.Events, k)
+			continue
+		}
+		st.Events[k] = pruned
+	}
+
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal ratelimit store: %w: %w", errs.ErrStoreWrite, err)

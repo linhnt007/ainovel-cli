@@ -86,7 +86,7 @@ func TestLoadConfig_MissingFilesNoError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home) // ~/.ainovel/config.json không tồn tại
 	t.Setenv("USERPROFILE", home)
-	t.Chdir(t.TempDir())   // cũng không có ./.ainovel/config.json
+	t.Chdir(t.TempDir()) // cũng không có ./.ainovel/config.json
 
 	if _, err := LoadConfig(""); err != nil {
 		t.Fatalf("file cấu hình thiếu không được báo lỗi, nhận được: %v", err)

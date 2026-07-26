@@ -51,6 +51,39 @@ func TestStore_Persist(t *testing.T) {
 	}
 }
 
+// TestStore_WritePrunesStaleKeys là regression test cho fix wave cuối: withKey/write trước
+// đây chỉ prune key đang truy cập, nên key không còn dùng (model đổi tên, key test random)
+// sống mãi trong ratelimit.json, file phình đơn điệu theo thời gian. Sau fix, write() phải
+// prune MỌI key theo "now" và xoá hẳn key có event list rỗng sau prune — không chỉ key
+// đang ghi trong lần gọi withKey đó.
+func TestStore_WritePrunesStaleKeys(t *testing.T) {
+	g := testStore(t)
+	now := time.Unix(1_000_000, 0)
+
+	// "old/model" chỉ có event >24h so với "now" ở dưới — phải bị prune sạch + xoá key.
+	stale := now.Add(-25 * time.Hour)
+	_ = g.withKey("old/model", stale, func(e []event) []event {
+		return append(e, event{TS: stale.UnixNano(), Tokens: 10})
+	})
+	if _, ok := g.read().Events["old/model"]; !ok {
+		t.Fatal("setup: old/model phải tồn tại trước khi prune")
+	}
+
+	// withKey trên MỘT key khác tại "now" (>24h sau event của old/model) phải kích hoạt
+	// prune toàn cục trong write(), khiến old/model biến mất khỏi file.
+	_ = g.withKey("new/model", now, func(e []event) []event {
+		return append(e, event{TS: now.UnixNano(), Tokens: 1})
+	})
+
+	st := g.read()
+	if _, ok := st.Events["old/model"]; ok {
+		t.Fatalf("old/model vẫn còn trong store sau khi write prune toàn cục: %v", st.Events["old/model"])
+	}
+	if len(st.Events["new/model"]) != 1 {
+		t.Fatalf("new/model phải còn 1 event, got %d", len(st.Events["new/model"]))
+	}
+}
+
 // TestAcquireLock_StaleRemoveFailsRespectsDeadline là regression test cho review finding
 // #2 (Critical): trước fix, nhánh stale-lock gọi "continue" ngay sau os.Remove mà không
 // check deadline — nếu remove thất bại (lock là 1 thư mục non-empty, mô phỏng AV/OneDrive
