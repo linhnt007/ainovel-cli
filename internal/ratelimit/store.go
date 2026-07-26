@@ -17,6 +17,12 @@ import (
 type globalStore struct {
 	path string
 	lock string
+
+	// Tham số lockfile — field thay vì const để test override bằng giá trị ngắn,
+	// tránh test thật phải chờ đúng lockStale/lockTimeout sản xuất (10s/5s).
+	lockStale   time.Duration
+	lockSpin    time.Duration
+	lockTimeout time.Duration
 }
 
 type persisted struct {
@@ -33,34 +39,43 @@ func newGlobalStore() (*globalStore, error) {
 		return nil, fmt.Errorf("mkdir %s: %w: %w", base, errs.ErrStoreWrite, err)
 	}
 	return &globalStore{
-		path: filepath.Join(base, "ratelimit.json"),
-		lock: filepath.Join(base, "ratelimit.lock"),
+		path:        filepath.Join(base, "ratelimit.json"),
+		lock:        filepath.Join(base, "ratelimit.lock"),
+		lockStale:   defaultLockStale,
+		lockSpin:    defaultLockSpin,
+		lockTimeout: defaultLockTimeout,
 	}, nil
 }
 
 const (
-	lockStale   = 10 * time.Second
-	lockSpin    = 20 * time.Millisecond
-	lockTimeout = 5 * time.Second
+	defaultLockStale   = 10 * time.Second
+	defaultLockSpin    = 20 * time.Millisecond
+	defaultLockTimeout = 5 * time.Second
 )
 
+// acquireLock chờ tới khi tạo được lockfile hoặc hết lockTimeout.
+// QUAN TRỌNG: deadline PHẢI được kiểm tra ở MỌI vòng lặp, kể cả sau khi thử xoá
+// stale lock — nếu remove thất bại (Windows: AV/OneDrive/tiến trình khác còn giữ
+// handle mở, xoá dir non-empty...) thì lock vẫn còn đó, vòng lặp sau sẽ dẫm lại
+// đúng nhánh này; nếu "continue" bỏ qua check deadline sẽ busy-spin vô hạn, bỏ
+// qua timeout — vi phạm nguyên tắc fail-open toàn cục (không được kẹt luồng sáng tác).
 func (g *globalStore) acquireLock() error {
-	deadline := time.Now().Add(lockTimeout)
+	deadline := time.Now().Add(g.lockTimeout)
 	for {
 		f, err := os.OpenFile(g.lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
 			_ = f.Close()
 			return nil
 		}
-		// Stale lock: chủ cũ crash không dọn → xoá nếu quá cũ.
-		if fi, statErr := os.Stat(g.lock); statErr == nil && time.Since(fi.ModTime()) > lockStale {
+		// Stale lock: chủ cũ crash không dọn → xoá nếu quá cũ. Không "continue" ngay —
+		// dù xoá thành công hay thất bại, vẫn phải rơi xuống check deadline bên dưới.
+		if fi, statErr := os.Stat(g.lock); statErr == nil && time.Since(fi.ModTime()) > g.lockStale {
 			_ = os.Remove(g.lock)
-			continue
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("acquire ratelimit lock timeout: %w", errs.ErrStoreWrite)
 		}
-		time.Sleep(lockSpin)
+		time.Sleep(g.lockSpin)
 	}
 }
 

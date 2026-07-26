@@ -33,8 +33,7 @@ func (r *Registry) Register(provider, model string, lim Limits) {
 	r.ensureStore()
 	k := key(provider, model)
 	if l, ok := r.limiters[k]; ok {
-		l.limits = lim // cập nhật nếu đổi config
-		l.resize(lim.MaxConcurrent)
+		l.updateLimits(lim) // cập nhật nếu đổi config — tự khoá l.mu bên trong
 		return
 	}
 	r.limiters[k] = newLimiter(k, lim, r.store, r.nowFn)
@@ -82,11 +81,25 @@ type Limiter struct {
 
 func newLimiter(k string, lim Limits, store *globalStore, nowFn func() time.Time) *Limiter {
 	l := &Limiter{k: k, limits: lim, store: store, nowFn: nowFn}
-	l.resize(lim.MaxConcurrent)
+	l.resizeLocked(lim.MaxConcurrent) // object chưa publish ra ngoài, chưa cần khoá
 	return l
 }
 
-func (l *Limiter) resize(n int) {
+// updateLimits cập nhật limits + resize sem dưới l.mu. Gọi từ Registry.Register khi
+// key đã sống (có thể đang có TryAcquire/Record chạy song song) — PHẢI khoá l.mu khi
+// mutate để tránh race với TryAcquire/Record đọc l.limits/l.sem (finding review #4).
+func (l *Limiter) updateLimits(lim Limits) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.limits = lim
+	l.resizeLocked(lim.MaxConcurrent)
+}
+
+// resizeLocked thay sem theo MaxConcurrent mới. Caller phải giữ l.mu (hoặc là
+// newLimiter dựng object chưa publish). Handle đang outstanding giữ tham chiếu kênh
+// sem riêng (Handle.sem, chiếm dưới lúc TryAcquire) nên resize ở đây không làm lệch
+// Record của các Handle cũ — chúng vẫn nhả đúng kênh đã chiếm, không phải l.sem mới.
+func (l *Limiter) resizeLocked(n int) {
 	if n <= 0 {
 		l.sem = nil
 		return
@@ -99,9 +112,12 @@ func (l *Limiter) resize(n int) {
 
 // Handle đại diện 1 slot đã chiếm. PHẢI gọi Record đúng 1 lần.
 type Handle struct {
-	l       *Limiter
-	tsNano  int64
-	tookSem bool
+	l      *Limiter
+	tsNano int64
+	// sem lưu trực tiếp kênh đã chiếm lúc TryAcquire (nil nếu không giới hạn
+	// concurrency) — KHÔNG đọc lại l.sem lúc Record, vì Register có thể resize
+	// (đổi con trỏ channel) đồng thời giữa lúc chiếm và lúc nhả.
+	sem chan struct{}
 }
 
 // peek báo retryAfter hiện tại (0 = sẵn), KHÔNG chiếm slot, KHÔNG ghi file. Chỉ đọc.
@@ -118,11 +134,12 @@ func (l *Limiter) peek(estTokens int) time.Duration {
 		l.mu.Unlock()
 		return 50 * time.Millisecond
 	}
+	limits := l.limits // snapshot dưới khoá, dùng nhất quán cho lần đọc store bên dưới
 	l.mu.Unlock()
 	if l.store == nil {
 		return 0
 	}
-	return l.store.peekKey(l.k, now, l.limits, estTokens)
+	return l.store.peekKey(l.k, now, limits, estTokens)
 }
 
 // TryAcquire chiếm slot NGUYÊN TỬ nếu còn quota; ok=false + retryAfter nếu chặn.
@@ -135,12 +152,15 @@ func (l *Limiter) TryAcquire(estTokens int) (*Handle, time.Duration, bool) {
 		l.mu.Unlock()
 		return nil, d, false
 	}
+	// Snapshot limits+sem dưới cùng 1 khoá — Register có thể updateLimits (đổi cả 2)
+	// đồng thời trên key đang sống; đọc rời rạc ngoài khoá là race (finding review #4).
+	limits, sem := l.limits, l.sem
 	l.mu.Unlock()
 
 	// Chiếm sem in-process (non-block); đầy → chặn.
-	if l.sem != nil {
+	if sem != nil {
 		select {
-		case l.sem <- struct{}{}:
+		case sem <- struct{}{}:
 		default:
 			return nil, 50 * time.Millisecond, false
 		}
@@ -150,33 +170,51 @@ func (l *Limiter) TryAcquire(estTokens int) (*Handle, time.Duration, bool) {
 	ok := l.store == nil // store nil = fail-open, luôn cho qua
 	var ra time.Duration
 	if l.store != nil {
-		_ = l.store.withKey(l.k, now, func(evs []event) []event {
-			if d := check(evs, l.limits, now, estTokens); d > 0 {
+		ran := false // callback có thực sự chạy không (phân biệt "lỗi trước khi check quota" vs "quota chặn thật")
+		storeErr := l.store.withKey(l.k, now, func(evs []event) []event {
+			ran = true
+			if d := check(evs, limits, now, estTokens); d > 0 {
 				ra = d
 				return evs // không đủ quota, không ghi
 			}
 			ok = true
 			return append(evs, event{TS: tsNano, Tokens: estTokens})
 		})
+		if storeErr != nil && !ran {
+			// withKey lỗi TRƯỚC khi callback chạy (vd acquireLock timeout do lockfile
+			// bị AV/OneDrive giữ) → không có cách nào biết quota thật. Global Constraint
+			// của plan thắng code mẫu gốc ở đây: "fail-open: mọi lỗi store KHÔNG bao giờ
+			// chặn sáng tác" — PHẢI cho qua, không được trả ok=false (đã verify thực
+			// nghiệm: lock timeout 5s rồi chặn request là sai).
+			slog.Warn("ratelimit: store lỗi trước khi kiểm tra quota, fail-open (cho qua)", "key", l.k, "err", storeErr)
+			ok = true
+			ra = 0
+		}
 	}
 	if !ok {
-		if l.sem != nil {
-			<-l.sem // nhả sem đã chiếm hụt
+		if sem != nil {
+			<-sem // nhả sem đã chiếm hụt
 		}
 		return nil, ra, false
 	}
-	return &Handle{l: l, tsNano: tsNano, tookSem: l.sem != nil}, 0, true
+	return &Handle{l: l, tsNano: tsNano, sem: sem}, 0, true
 }
 
 // Acquire block-and-wait tới khi chiếm được slot hoặc ctx hủy.
 func (l *Limiter) Acquire(ctx context.Context, estTokens int) (*Handle, error) {
 	for {
+		// Check ctx ở ĐẦU mọi vòng lặp — kể cả nhánh fast-path "ra<=0 tiếp tục ngay"
+		// bên dưới, nếu không sẽ spin vĩnh viễn không tôn trọng cancel khi store hỏng
+		// dai dẳng khiến TryAcquire/peek luôn trả về "vừa hết" (finding review #3).
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if h, _, ok := l.TryAcquire(estTokens); ok {
 			return h, nil
 		}
 		ra := l.peek(estTokens)
 		if ra <= 0 {
-			continue // vừa có slot (race), thử lại ngay
+			continue // vừa có slot (race), thử lại ngay — vòng sau vẫn check ctx ở đầu
 		}
 		if ra > 5*time.Second {
 			ra = 5 * time.Second // ngủ ngắn rồi kiểm lại (cửa sổ có thể hồi sớm)
@@ -195,8 +233,8 @@ func (h *Handle) Record(actualTokens int, err error) {
 		return
 	}
 	l := h.l
-	if h.tookSem {
-		<-l.sem
+	if h.sem != nil {
+		<-h.sem // nhả đúng kênh đã chiếm lúc TryAcquire, không đọc lại l.sem (có thể đã bị resize)
 	}
 
 	// Cập nhật token thực cho event đã reserved (chỉ ảnh hưởng TPM).

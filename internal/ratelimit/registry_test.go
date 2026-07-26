@@ -1,7 +1,10 @@
 package ratelimit
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -129,4 +132,78 @@ func TestLimiter_Concurrency(t *testing.T) {
 		t.Fatal("goroutine never acquired slot after release")
 	}
 	close(release)
+}
+
+// TestLimiter_TryAcquire_StoreLockFailure_FailsOpen là regression test cho review finding
+// #1 (Critical): trước fix, khi store.withKey lỗi TRƯỚC khi callback chạy (vd acquireLock
+// timeout vì lockfile bị tiến trình khác/AV/OneDrive giữ), TryAcquire trả ok=false mà
+// KHÔNG hề chiếm được quota thật — tức chặn request oan trong khi Global Constraint của
+// plan yêu cầu "fail-open: mọi lỗi store KHÔNG bao giờ chặn sáng tác". Reviewer verify thực
+// nghiệm: lock tươi có sẵn → TryAcquire mất 5.02s rồi ok=false. Test dùng lockTimeout ngắn
+// (field override) để deterministic + nhanh, giả lập lock "tươi" (không stale) bị tiến
+// trình khác giữ, rồi assert TryAcquire vẫn fail-open (ok=true, handle hợp lệ) trong
+// khoảng ~lockTimeout, không chặn vô thời hạn.
+func TestLimiter_TryAcquire_StoreLockFailure_FailsOpen(t *testing.T) {
+	dir := t.TempDir()
+	store := &globalStore{
+		path:        filepath.Join(dir, "rl.json"),
+		lock:        filepath.Join(dir, "rl.lock"),
+		lockStale:   time.Hour, // không bao giờ coi là stale trong test này — ép timeout thật
+		lockSpin:    5 * time.Millisecond,
+		lockTimeout: 80 * time.Millisecond,
+	}
+	// Giả lập tiến trình khác đang giữ lock: file "tươi" (mtime vừa tạo, chưa quá lockStale)
+	// → acquireLock bên trong TryAcquire phải timeout thật sau ~lockTimeout, không phải nhánh
+	// stale-remove.
+	f, err := os.OpenFile(store.lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("setup: tạo lock giả thất bại: %v", err)
+	}
+	_ = f.Close()
+
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	l := newLimiter("p/m", Limits{RPM: 1}, store, clock.now)
+
+	start := time.Now()
+	h, ra, ok := l.TryAcquire(0)
+	elapsed := time.Since(start)
+
+	if !ok || h == nil {
+		t.Fatalf("expect fail-open (ok=true, handle non-nil) khi store lock timeout, got ok=%v ra=%v elapsed=%v", ok, ra, elapsed)
+	}
+	if elapsed > store.lockTimeout+500*time.Millisecond {
+		t.Fatalf("TryAcquire bị chặn quá lâu dù chính sách fail-open: elapsed=%v (lockTimeout=%v) — regression finding #1", elapsed, store.lockTimeout)
+	}
+	h.Record(0, nil)
+}
+
+// TestLimiter_Acquire_RespectsCanceledContext là regression test cho review finding #3
+// (Critical): trước fix, Acquire chỉ check ctx.Done() bên trong nhánh select sau khi đã
+// tính ra retryAfter>0 — nhánh fast-path "ra<=0 { continue }" bỏ qua ctx hoàn toàn, và nếu
+// ctx đã bị huỷ TRƯỚC khi gọi Acquire, code cũ vẫn thử TryAcquire trước (có thể acquire
+// thành công nếu slot còn trống) — không tôn trọng cancel ngay từ đầu. Sau fix, ctx.Err()
+// được check ở ĐẦU mọi vòng lặp, nên Acquire với ctx đã huỷ phải trả lỗi ngay, không chiếm
+// slot dù slot đang trống.
+func TestLimiter_Acquire_RespectsCanceledContext(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	l := newTestLimiter(t, Limits{MaxConcurrent: 1}, clock)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // huỷ TRƯỚC khi gọi Acquire — slot vẫn đang trống (chưa ai chiếm)
+
+	h, err := l.Acquire(ctx, 0)
+	if h != nil || err == nil {
+		t.Fatalf("expect nil handle + non-nil err với ctx đã huỷ, got h=%v err=%v", h, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expect context.Canceled, got %v", err)
+	}
+
+	// Slot phải còn nguyên (Acquire không được lặt vặt chiếm rồi bỏ khi ctx đã huỷ) —
+	// nếu fix đúng, TryAcquire trực tiếp vẫn phải ok vì Acquire chưa từng đụng vào sem.
+	h2, _, ok := l.TryAcquire(0)
+	if !ok {
+		t.Fatal("expect slot vẫn trống sau khi Acquire trả về sớm do ctx đã huỷ — regression finding #3")
+	}
+	h2.Record(0, nil)
 }
