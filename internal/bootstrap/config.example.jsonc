@@ -25,6 +25,17 @@
       "extra": {
         "user_agent": "my-client/1.0",
         "headers": { "X-Custom-Client": "my-client" }
+      },
+      // Tùy chọn. Rate limit mặc định cho MỌI model của provider này. 0/bỏ trống = không giới hạn chiều đó.
+      // rpd dùng cửa sổ cuộn 24h (an toàn nhất, không bao giờ vượt trong bất kỳ 24h nào). max_concurrent chỉ
+      // chặn song song trong tiến trình hiện tại; rpm/rpd/tpm đếm global toàn máy (dùng chung giữa nhiều dự án)
+      // và sống qua restart, tránh 2 tiến trình cùng vượt quota nhà cung cấp (nguy cơ bị gắn cờ lạm dụng/ban nick).
+      "rate_limit": { "rpm": 20, "rpd": 200, "tpm": 100000, "max_concurrent": 2 },
+      // Tùy chọn. Override rate limit theo từng model (phủ lên rate_limit theo từng field, field bỏ trống/0
+      // thì kế thừa giá trị của rate_limit ở trên). Nên đặt chặt cho model free tier dễ bị giới hạn.
+      "model_limits": {
+        "google/gemini-2.5-pro": { "rpm": 5, "rpd": 100, "tpm": 60000 },
+        "google/gemini-2.5-flash": { "rpm": 10, "rpd": 200 }
       }
     },
     "anthropic": {

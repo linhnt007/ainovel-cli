@@ -171,6 +171,18 @@ func mergeConfig(base, overlay Config) Config {
 			if len(v.Extra) > 0 {
 				existing.Extra = cloneMap(v.Extra)
 			}
+			if v.RateLimit != nil {
+				rl := *v.RateLimit
+				existing.RateLimit = &rl
+			}
+			if len(v.ModelLimits) > 0 {
+				if existing.ModelLimits == nil {
+					existing.ModelLimits = make(map[string]RateLimitConfig, len(v.ModelLimits))
+				}
+				for mk, mv := range v.ModelLimits {
+					existing.ModelLimits[mk] = mv
+				}
+			}
 			base.Providers[k] = existing
 		}
 	}

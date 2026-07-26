@@ -21,6 +21,7 @@ func writeGlobal(t *testing.T, content string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := filepath.Join(home, ".ainovel")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -84,6 +85,7 @@ func TestLoadConfig_CorruptGlobalDoesNotBlockOverride(t *testing.T) {
 func TestLoadConfig_MissingFilesNoError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home) // ~/.ainovel/config.json không tồn tại
+	t.Setenv("USERPROFILE", home)
 	t.Chdir(t.TempDir())   // cũng không có ./.ainovel/config.json
 
 	if _, err := LoadConfig(""); err != nil {
@@ -169,6 +171,85 @@ func TestMergeConfig_ProviderExtraFields(t *testing.T) {
 	}
 }
 
+// TestMergeConfig_RateLimit xác nhận RateLimit (con trỏ) và ModelLimits (map) sống qua merge:
+// overlay.RateLimit thay thế toàn bộ khối; overlay.ModelLimits hợp nhất theo key, giữ lại
+// key đã có ở base mà overlay không đề cập.
+func TestMergeConfig_RateLimit(t *testing.T) {
+	base := Config{
+		Provider:  "openrouter",
+		ModelName: "google/gemini-2.5-flash",
+		Providers: map[string]ProviderConfig{
+			"openrouter": {
+				APIKey:    "sk-test-123456",
+				RateLimit: &RateLimitConfig{RPM: 20, RPD: 200, TPM: 100000, MaxConcurrent: 2},
+				ModelLimits: map[string]RateLimitConfig{
+					"google/gemini-2.5-flash": {RPM: 10, RPD: 200},
+				},
+			},
+		},
+	}
+	overlay := Config{
+		Providers: map[string]ProviderConfig{
+			"openrouter": {
+				RateLimit: &RateLimitConfig{RPM: 5, RPD: 100, TPM: 60000},
+				ModelLimits: map[string]RateLimitConfig{
+					"google/gemini-2.5-pro": {RPM: 5, RPD: 100, TPM: 60000},
+				},
+			},
+		},
+	}
+
+	cfg := mergeConfig(base, overlay)
+	pc := cfg.Providers["openrouter"]
+
+	if pc.RateLimit == nil {
+		t.Fatal("RateLimit bị rơi sau merge, muốn overlay.RateLimit")
+	}
+	if *pc.RateLimit != (RateLimitConfig{RPM: 5, RPD: 100, TPM: 60000}) {
+		t.Fatalf("RateLimit = %#v, want overlay RateLimit (ghi đè toàn khối)", *pc.RateLimit)
+	}
+
+	if len(pc.ModelLimits) != 2 {
+		t.Fatalf("ModelLimits = %#v, want 2 key (base + overlay hợp nhất)", pc.ModelLimits)
+	}
+	if got := pc.ModelLimits["google/gemini-2.5-flash"]; got != (RateLimitConfig{RPM: 10, RPD: 200}) {
+		t.Fatalf("ModelLimits[flash] = %#v, want giữ nguyên từ base", got)
+	}
+	if got := pc.ModelLimits["google/gemini-2.5-pro"]; got != (RateLimitConfig{RPM: 5, RPD: 100, TPM: 60000}) {
+		t.Fatalf("ModelLimits[pro] = %#v, want từ overlay", got)
+	}
+}
+
+// TestEffectiveRateLimit_ModelOverride xác nhận EffectiveRateLimit ghép RateLimit provider +
+// override model theo từng field (field=0 ở override thì giữ giá trị provider).
+func TestEffectiveRateLimit_ModelOverride(t *testing.T) {
+	pc := ProviderConfig{
+		RateLimit: &RateLimitConfig{RPM: 20, RPD: 200, TPM: 100000, MaxConcurrent: 2},
+		ModelLimits: map[string]RateLimitConfig{
+			"google/gemini-2.5-pro": {RPM: 5, RPD: 100, TPM: 60000},
+		},
+	}
+
+	got := pc.EffectiveRateLimit("google/gemini-2.5-pro")
+	want := RateLimitConfig{RPM: 5, RPD: 100, TPM: 60000, MaxConcurrent: 2}
+	if got != want {
+		t.Fatalf("EffectiveRateLimit(pro) = %#v, want %#v", got, want)
+	}
+
+	// Model không có override → dùng nguyên RateLimit cấp provider.
+	got = pc.EffectiveRateLimit("google/gemini-2.5-flash")
+	want = RateLimitConfig{RPM: 20, RPD: 200, TPM: 100000, MaxConcurrent: 2}
+	if got != want {
+		t.Fatalf("EffectiveRateLimit(flash, không override) = %#v, want %#v", got, want)
+	}
+
+	// Provider không cấu hình RateLimit → zero value, không panic.
+	var empty ProviderConfig
+	if got := empty.EffectiveRateLimit("any"); got != (RateLimitConfig{}) {
+		t.Fatalf("EffectiveRateLimit trên provider trống = %#v, want zero", got)
+	}
+}
+
 // Nguyên nhân gốc 2 (tái hiện cốt lõi issue #37): cấp dự án ghi đè provider nhưng không khai báo
 // thông tin xác thực providers tương ứng — ValidateBase phải báo lỗi config
 // (thay vì cho qua rồi crash ở tầng sâu hơn).
@@ -194,27 +275,28 @@ func TestValidateBase_ProviderOverrideWithoutCredentials(t *testing.T) {
 // sau khi bỏ comment phải là JSON hợp lệ, con trỏ provider cấp cao nhất không được treo lơ lửng,
 // và phải giải thích rõ tư duy “con trỏ” — đây là mẫu người dùng sẽ chép, nếu chính nó lỗi sẽ gây hại.
 func TestExampleConfigIsValidAndSelfConsistent(t *testing.T) {
-	if exampleConfig == “” {
-		t.Fatal(“go:embed chưa có hiệu lực, exampleConfig rỗng”)
+	if exampleConfig == "" {
+		t.Fatal("go:embed chưa có hiệu lực, exampleConfig rỗng")
 	}
 	var cfg Config
 	if err := json.Unmarshal(stripJSONComments([]byte(exampleConfig)), &cfg); err != nil {
-		t.Fatalf(“file ví dụ nội trang sau khi bỏ comment không phải JSON hợp lệ (người dùng chép là gặp họa): %v”, err)
+		t.Fatalf("file ví dụ nội trang sau khi bỏ comment không phải JSON hợp lệ (người dùng chép là gặp họa): %v", err)
 	}
-	if cfg.Provider == “” || cfg.ModelName == “” {
-		t.Fatal(“file ví dụ phải cung cấp provider/model mặc định”)
+	if cfg.Provider == "" || cfg.ModelName == "" {
+		t.Fatal("file ví dụ phải cung cấp provider/model mặc định")
 	}
 	if _, ok := cfg.Providers[cfg.Provider]; !ok {
-		t.Errorf(“provider cấp cao nhất %q trong ví dụ không trỏ đến mục trong providers — mẫu con trỏ chính nó bị treo lơ lửng”, cfg.Provider)
+		t.Errorf("provider cấp cao nhất %q trong ví dụ không trỏ đến mục trong providers — mẫu con trỏ chính nó bị treo lơ lửng", cfg.Provider)
 	}
-	if !contains(exampleConfig, “con trỏ”) {
-		t.Error(“file ví dụ phải giải thích rõ \”provider là con trỏ\” — tránh để bẫy nhận thức của #37 tái diễn”)
+	if !contains(exampleConfig, "con trỏ") {
+		t.Error("file ví dụ phải giải thích rõ \"provider là con trỏ\" — tránh để bẫy nhận thức của #37 tái diễn")
 	}
 }
 
 func TestWriteStartupError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	path := WriteStartupError("boom: provider not configured")
 	if path == "" {

@@ -60,6 +60,42 @@ type ProviderConfig struct {
 	// Extra truyền thẳng vào cấu hình cấp nhà cung cấp (litellm.ProviderConfig.Extra), dùng cho HTTP
 	// headers, user_agent, anthropic_beta và các tùy chọn client/transport layer.
 	Extra map[string]any `json:"extra,omitempty"`
+	// RateLimit áp cho mọi model của provider này (mặc định).
+	RateLimit *RateLimitConfig `json:"rate_limit,omitempty"`
+	// ModelLimits override theo từng model (key = tên model), phủ lên RateLimit theo từng field.
+	ModelLimits map[string]RateLimitConfig `json:"model_limits,omitempty"`
+}
+
+// RateLimitConfig là giới hạn tần suất cho provider (mặc định) hoặc 1 model cụ thể.
+// 0 = không giới hạn chiều đó. RPD dùng cửa sổ cuộn 24h.
+type RateLimitConfig struct {
+	RPM           int `json:"rpm,omitempty"`            // requests/phút
+	RPD           int `json:"rpd,omitempty"`            // requests/24h cuộn
+	TPM           int `json:"tpm,omitempty"`            // tokens/phút
+	MaxConcurrent int `json:"max_concurrent,omitempty"` // trần song song (in-process)
+}
+
+// EffectiveRateLimit ghép RateLimit provider + override model theo từng field.
+func (pc ProviderConfig) EffectiveRateLimit(model string) RateLimitConfig {
+	var out RateLimitConfig
+	if pc.RateLimit != nil {
+		out = *pc.RateLimit
+	}
+	if ov, ok := pc.ModelLimits[model]; ok {
+		if ov.RPM > 0 {
+			out.RPM = ov.RPM
+		}
+		if ov.RPD > 0 {
+			out.RPD = ov.RPD
+		}
+		if ov.TPM > 0 {
+			out.TPM = ov.TPM
+		}
+		if ov.MaxConcurrent > 0 {
+			out.MaxConcurrent = ov.MaxConcurrent
+		}
+	}
+	return out
 }
 
 // RequiresAPIKey trả về liệu nhà cung cấp này có bắt buộc phải cấu hình api_key hay không.
