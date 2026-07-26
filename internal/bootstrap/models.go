@@ -12,6 +12,7 @@ import (
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
 	"github.com/voocel/ainovel-cli/internal/errs"
+	"github.com/voocel/ainovel-cli/internal/ratelimit"
 )
 
 // Trong tình huống đầu ra dài + ctx dài, với nhà cung cấp hỗ trợ suy luận (mimo / deepseek-r1 v.v.)
@@ -280,8 +281,20 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, cache m
 	if err != nil {
 		return nil, fmt.Errorf("provider %s (%s): %w: %w", providerKey, providerType, errs.ErrProvider, err)
 	}
-	cache[cacheKey] = m
-	return m, nil
+
+	// Đăng ký giới hạn hiệu lực (RPM/RPD/TPM/MaxConcurrent) vào registry global + bọc
+	// lớp rate limit (single-target, block-and-wait qua registry).
+	eff := pc.EffectiveRateLimit(model)
+	ratelimit.Global.Register(providerKey, model, ratelimit.Limits{
+		RPM: eff.RPM, RPD: eff.RPD, TPM: eff.TPM, MaxConcurrent: eff.MaxConcurrent,
+	})
+	rlModel := &rateLimitedModel{
+		ChatModel: m,
+		provider:  providerKey,
+		model:     model,
+	}
+	cache[cacheKey] = rlModel
+	return rlModel, nil
 }
 
 type failoverModel struct {
@@ -291,45 +304,123 @@ type failoverModel struct {
 	report    FailoverReporter
 }
 
+// rotationTargets trả về danh sách target theo thứ tự ưu tiên (primary trước).
+// Primary luôn đứng đầu để tự động quay lại model gốc khi nó hồi quota, giữ chất lượng.
+func (m *failoverModel) rotationTargets() []modelTarget {
+	targets := []modelTarget{m.currentTarget()}
+	for _, t := range m.fallbacks {
+		if t.provider == targets[0].provider && t.name == targets[0].name {
+			continue
+		}
+		targets = append(targets, t)
+	}
+	return targets
+}
+
+// pickAvailable chọn target đầu còn quota (TryAcquire ok). Nếu mọi target đều chạm giới hạn,
+// chờ target có retryAfter ngắn nhất rồi Acquire (block-and-wait). Trả về target + handle đã chiếm slot.
+func (m *failoverModel) pickAvailable(ctx context.Context, est int) (modelTarget, *ratelimit.Handle, error) {
+	targets := m.rotationTargets()
+	var bestRA time.Duration = 1 << 62
+	var bestIdx int
+	for i, t := range targets {
+		lim := ratelimit.Global.For(t.provider, t.name)
+		if h, ra, ok := lim.TryAcquire(est); ok {
+			return t, h, nil
+		} else if ra < bestRA {
+			bestRA, bestIdx = ra, i
+		}
+	}
+	// Tất cả chạm limit → chờ target rẻ nhất.
+	t := targets[bestIdx]
+	slog.Info("ratelimit: mọi model chạm giới hạn, chờ target rẻ nhất",
+		"role", m.role, "target", t.provider+"/"+t.name, "wait", bestRA)
+	h, err := ratelimit.Global.For(t.provider, t.name).Acquire(ctx, est)
+	return t, h, err
+}
+
 func (m *failoverModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
-	current := m.currentTarget()
-	resp, err := current.model.Generate(ctx, messages, tools, opts...)
-	if err == nil {
+	est := estimateTokens(messages)
+	origin := m.currentTarget()
+
+	target, h, err := m.pickAvailable(ctx, est)
+	if err != nil {
+		return nil, err
+	}
+	if target.provider != origin.provider || target.name != origin.name {
+		m.reportFailover(origin, target, "rate_limit", nil)
+	}
+	resp, gerr := target.model.Generate(ctx, messages, tools, opts...)
+	h.Record(responseTokens(resp), gerr)
+	if gerr == nil {
 		return resp, nil
 	}
 
-	next, reason, ok := m.pickFallback(current, err)
-	if !ok {
-		return nil, err
+	// Lỗi vận hành (không phải quota) → path failover cũ 1 lần.
+	if next, reason, ok := m.pickFallback(target, gerr); ok {
+		m.reportFailover(target, next, reason, gerr)
+		nh, aerr := ratelimit.Global.For(next.provider, next.name).Acquire(ctx, est)
+		if aerr != nil {
+			return nil, aerr
+		}
+		r2, e2 := next.model.Generate(ctx, messages, tools, opts...)
+		nh.Record(responseTokens(r2), e2)
+		return r2, e2
 	}
-	m.reportFailover(current, next, reason, err)
-	return next.model.Generate(ctx, messages, tools, opts...)
+	return nil, gerr
 }
 
+// GenerateStream giữ khung goto-retry cũ, nhưng: (a) chọn target đầu qua pickAvailable
+// (rotation, ưu tiên quay lại primary), (b) chiếm handle limiter tương ứng, (c) forward
+// event xuống caller, (d) StreamEventError lần đầu → Record lỗi + thử pickFallback (path
+// failover vận hành cũ) đúng 1 lần, chiếm handle mới cho target kế; (e) StreamEventDone →
+// Record token thực từ Usage.
 func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
 	out := make(chan agentcore.StreamEvent, 100)
+	est := estimateTokens(messages)
 
 	go func() {
 		defer close(out)
 
-		current := m.currentTarget()
+		origin := m.currentTarget()
+		current, handle, perr := m.pickAvailable(ctx, est)
+		if perr != nil {
+			out <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: perr}
+			return
+		}
+		if current.provider != origin.provider || current.name != origin.name {
+			m.reportFailover(origin, current, "rate_limit", nil)
+		}
 		fallbackUsed := false
 
 	retry:
-		source, resp, err := m.startAttempt(ctx, current, messages, tools, opts...)
-		if err != nil {
+		source, resp, serr := m.startAttempt(ctx, current, messages, tools, opts...)
+		if serr != nil {
+			recorded := false
 			if !fallbackUsed {
-				if next, reason, ok := m.pickFallback(current, err); ok {
+				if next, reason, ok := m.pickFallback(current, serr); ok {
+					handle.Record(0, serr)
+					recorded = true
 					fallbackUsed = true
-					m.reportFailover(current, next, reason, err)
+					m.reportFailover(current, next, reason, serr)
 					current = next
+					nh, aerr := ratelimit.Global.For(next.provider, next.name).Acquire(ctx, est)
+					if aerr != nil {
+						out <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: aerr}
+						return
+					}
+					handle = nh
 					goto retry
 				}
 			}
-			out <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: err}
+			if !recorded {
+				handle.Record(0, serr)
+			}
+			out <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: serr}
 			return
 		}
 		if resp != nil {
+			handle.Record(responseTokens(resp), nil)
 			out <- agentcore.StreamEvent{
 				Type:       agentcore.StreamEventDone,
 				Message:    resp.Message,
@@ -342,17 +433,34 @@ func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore
 		for ev := range source {
 			switch ev.Type {
 			case agentcore.StreamEventError:
+				recorded := false
 				if ev.Err != nil && !forwarded && !fallbackUsed {
 					if next, reason, ok := m.pickFallback(current, ev.Err); ok {
+						handle.Record(0, ev.Err)
+						recorded = true
 						fallbackUsed = true
 						m.reportFailover(current, next, reason, ev.Err)
 						current = next
+						nh, aerr := ratelimit.Global.For(next.provider, next.name).Acquire(ctx, est)
+						if aerr != nil {
+							out <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: aerr}
+							return
+						}
+						handle = nh
 						goto retry
 					}
+				}
+				if !recorded {
+					handle.Record(0, ev.Err)
 				}
 				out <- ev
 				return
 			case agentcore.StreamEventDone:
+				toks := 0
+				if ev.Message.Usage != nil {
+					toks = usageTokens(ev.Message.Usage)
+				}
+				handle.Record(toks, nil)
 				out <- ev
 				return
 			default:
@@ -360,6 +468,9 @@ func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore
 				out <- ev
 			}
 		}
+		// source đóng mà không phát StreamEventError/Done tường minh (bất thường) — vẫn
+		// phải nhả slot đã chiếm để không rò rỉ handle.
+		handle.Record(0, nil)
 	}()
 
 	return out, nil
@@ -448,4 +559,83 @@ func (m *failoverModel) startAttempt(ctx context.Context, target modelTarget, me
 		return nil, nil, genErr
 	}
 	return nil, resp, nil
+}
+
+// rateLimitedModel bọc 1 ChatModel đơn target (không rotation): Default, role không
+// có fallback, hoặc từng fallback target riêng lẻ. Chặn-và-chờ qua registry global.
+type rateLimitedModel struct {
+	agentcore.ChatModel
+	provider string
+	model    string
+}
+
+func (m *rateLimitedModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	lim := ratelimit.Global.For(m.provider, m.model)
+	h, err := lim.Acquire(ctx, estimateTokens(messages))
+	if err != nil {
+		return nil, err
+	}
+	resp, gerr := m.ChatModel.Generate(ctx, messages, tools, opts...)
+	h.Record(responseTokens(resp), gerr)
+	return resp, gerr
+}
+
+func (m *rateLimitedModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
+	lim := ratelimit.Global.For(m.provider, m.model)
+	h, err := lim.Acquire(ctx, estimateTokens(messages))
+	if err != nil {
+		return nil, err
+	}
+	source, serr := m.ChatModel.GenerateStream(ctx, messages, tools, opts...)
+	if serr != nil {
+		h.Record(0, serr)
+		return nil, serr
+	}
+
+	out := make(chan agentcore.StreamEvent, 100)
+	go func() {
+		defer close(out)
+		var streamErr error
+		var toks int
+		for ev := range source {
+			if ev.Type == agentcore.StreamEventError {
+				streamErr = ev.Err
+			}
+			if ev.Type == agentcore.StreamEventDone && ev.Message.Usage != nil {
+				toks = usageTokens(ev.Message.Usage)
+			}
+			out <- ev
+		}
+		h.Record(toks, streamErr)
+	}()
+
+	return out, nil
+}
+
+// estimateTokens ước lượng thô token đầu vào để pre-gate TPM (≈ 4 ký tự/token).
+func estimateTokens(messages []agentcore.Message) int {
+	chars := 0
+	for _, msg := range messages {
+		chars += len(msg.TextContent())
+	}
+	return chars / 4
+}
+
+// responseTokens trích số token thực từ phản hồi (không stream); 0 nếu thiếu Usage.
+func responseTokens(resp *agentcore.LLMResponse) int {
+	if resp == nil || resp.Message.Usage == nil {
+		return 0
+	}
+	return usageTokens(resp.Message.Usage)
+}
+
+// usageTokens ưu tiên TotalTokens do provider báo cáo; fallback Input+Output.
+func usageTokens(u *agentcore.Usage) int {
+	if u == nil {
+		return 0
+	}
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.Input + u.Output
 }
