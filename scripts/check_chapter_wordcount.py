@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Kiểm tra số từ của chương
-Đếm số TỪ (tách theo khoảng trắng) của file chương; dưới ngưỡng thì nhắc cần mở rộng.
-Đếm theo từ thật cho tiếng Việt (khác bản cũ đếm ký tự Hán, vốn trả 0 cho văn Việt).
-Vẫn nhận diện tiêu đề chương song ngữ: "# Chương N ..." (Việt) và "# 第N章 ..." (Trung).
+Kiểm tra số từ của chương.
+
+Đếm số TỪ (tách theo khoảng trắng, sau khi bỏ cú pháp Markdown) của file
+chương và PHÂN LOẠI theo ngưỡng: DƯỚI NGƯỠNG / TRONG NGƯỠNG / VƯỢT NGƯỠNG
+(mặc định 3000-6000 từ, chỉnh bằng --min/--max).
+
+Đây là công cụ QUAN SÁT/báo cáo, KHÔNG phải cổng chặn build: exit code luôn
+là 0, trừ khi có lỗi IO/parse thật sự (file/thư mục không tồn tại, không đọc
+được nội dung...).
+
+CHỦ Ý MẤT GATE CỨNG: bản trước đây fail cứng khi chương thiếu từ và in
+khuyến nghị "viết thêm mô tả/nội tâm cho đủ số từ" — tức là dạy padding cho
+đủ chỉ tiêu, đi ngược triết lý chống văn AI của hệ thống (số từ phục vụ nhịp
+điệu chương, không phải để viết thêm cho đủ). Bản này bỏ hẳn việc fail cứng
+và mọi khuyến nghị "viết thêm". Nếu bạn đang dựa vào script này như một gate
+cứng trong CI, gate đó đã bị gỡ có chủ đích ở đây — hãy tự thêm logic
+exit-code riêng ở nơi gọi nếu vẫn cần chặn build theo số từ.
+
+Nhận diện tiêu đề chương song ngữ: "# Chương N ..." (Việt) và "# 第N章 ..."
+(Trung) để cắt bỏ phần tiêu đề/metadata trước khi đếm.
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -16,6 +33,15 @@ if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+DEFAULT_MIN_WORDS = 3000
+DEFAULT_MAX_WORDS = 6000
+DEFAULT_PATTERN = 'Chương*.md'
+
+STATUS_UNDER = 'DƯỚI NGƯỠNG'
+STATUS_IN_RANGE = 'TRONG NGƯỠNG'
+STATUS_OVER = 'VƯỢT NGƯỠNG'
+STATUS_ERROR = 'error'
 
 
 def strip_markdown(text: str) -> str:
@@ -30,7 +56,7 @@ def strip_markdown(text: str) -> str:
 
 
 def count_words(text: str) -> int:
-    """Đếm số TỪ tiếng Việt: tách theo khoảng trắng sau khi bỏ Markdown."""
+    """Đếm số TỪ: tách theo khoảng trắng sau khi bỏ Markdown."""
     text = strip_markdown(text)
     return len(text.split())
 
@@ -57,119 +83,174 @@ def extract_content_from_chapter(file_path: Path) -> str:
     return '\n'.join(lines[content_start:])
 
 
-def check_chapter(file_path: str, min_words: int = 3000) -> dict:
-    """Kiểm tra số từ của một chương."""
+def classify_word_count(word_count: int, min_words: int, max_words: int) -> str:
+    """Phân loại số từ theo ngưỡng min/max. Không có khái niệm 'đạt/thiếu'."""
+    if word_count < min_words:
+        return STATUS_UNDER
+    if word_count > max_words:
+        return STATUS_OVER
+    return STATUS_IN_RANGE
+
+
+def check_chapter(file_path: str, min_words: int = DEFAULT_MIN_WORDS, max_words: int = DEFAULT_MAX_WORDS) -> dict:
+    """Kiểm tra số từ của một chương và trả về phân loại (không chặn build)."""
     path = Path(file_path)
     if not path.exists():
         return {
             'file': str(path),
             'exists': False,
             'word_count': 0,
-            'status': 'error',
+            'status': STATUS_ERROR,
             'message': f'File không tồn tại: {file_path}',
         }
 
-    main_content = extract_content_from_chapter(path)
+    try:
+        main_content = extract_content_from_chapter(path)
+    except (OSError, UnicodeDecodeError) as exc:
+        return {
+            'file': str(path),
+            'exists': True,
+            'word_count': 0,
+            'status': STATUS_ERROR,
+            'message': f'Lỗi đọc file: {exc}',
+        }
+
     word_count = count_words(main_content)
-    status = 'pass' if word_count >= min_words else 'fail'
-    message = f'Số từ: {word_count}'
-    if word_count >= min_words:
-        message += ' (✓ đạt)'
-    else:
-        message += f' (✗ thiếu, cần ít nhất {min_words} từ)'
+    label = classify_word_count(word_count, min_words, max_words)
 
     return {
         'file': str(path),
         'exists': True,
         'word_count': word_count,
-        'status': status,
-        'message': message,
+        'status': label,
+        'message': f'Số từ: {word_count} ({label})',
     }
 
 
-def check_all_chapters(directory: str, pattern: str = 'Chương*.md', min_words: int = 3000) -> list:
-    """Kiểm tra mọi file chương khớp mẫu trong thư mục."""
+def check_all_chapters(
+    directory: str,
+    pattern: str = DEFAULT_PATTERN,
+    min_words: int = DEFAULT_MIN_WORDS,
+    max_words: int = DEFAULT_MAX_WORDS,
+) -> list:
+    """Kiểm tra mọi file chương khớp mẫu trong thư mục. Trả về [] nếu thư mục lỗi."""
     dir_path = Path(directory)
     if not dir_path.exists():
         print(f'Lỗi: thư mục không tồn tại - {directory}')
-        return []
+        return None
 
     chapter_files = sorted(dir_path.glob(pattern))
-    return [check_chapter(str(chapter_file), min_words) for chapter_file in chapter_files]
+    return [check_chapter(str(chapter_file), min_words, max_words) for chapter_file in chapter_files]
 
 
-def print_results(results: list, min_words: int = 3000) -> None:
-    """In kết quả kiểm tra."""
+def print_results(results: list, min_words: int = DEFAULT_MIN_WORDS, max_words: int = DEFAULT_MAX_WORDS) -> None:
+    """In báo cáo phân loại. Không in khuyến nghị 'viết thêm cho đủ'."""
     if not results:
         print('Không tìm thấy file chương')
         return
 
     total_words = 0
-    passed = 0
-    failed = 0
+    counts = {STATUS_UNDER: 0, STATUS_IN_RANGE: 0, STATUS_OVER: 0, STATUS_ERROR: 0}
 
     print('\n' + '=' * 60)
-    print('Báo cáo kiểm tra số từ chương')
+    print(f'Báo cáo số từ chương (ngưỡng: {min_words}-{max_words} từ)')
     print('=' * 60)
 
     for result in results:
-        if not result['exists']:
-            print(f'\n❌ {result["file"]}')
+        if not result['exists'] or result['status'] == STATUS_ERROR:
+            counts[STATUS_ERROR] += 1
+            print(f'\n[LỖI] {result["file"]}')
             print(f'   {result["message"]}')
             continue
 
         total_words += result['word_count']
-        if result['status'] == 'pass':
-            passed += 1
-            icon = '✅'
-        else:
-            failed += 1
-            icon = '⚠️ '
+        counts[result['status']] += 1
+
+        icon = {
+            STATUS_UNDER: '[DƯỚI]',
+            STATUS_IN_RANGE: '[OK]  ',
+            STATUS_OVER: '[VƯỢT]',
+        }[result['status']]
 
         print(f'\n{icon} {Path(result["file"]).name}')
         print(f'   {result["message"]}')
 
     print('\n' + '-' * 60)
-    print(f'Tổng: {len(results)} chương | {passed} đạt | {failed} thiếu | tổng số từ: {total_words:,}')
+    print(
+        f'Tổng: {len(results)} chương | '
+        f'{counts[STATUS_IN_RANGE]} trong ngưỡng | '
+        f'{counts[STATUS_UNDER]} dưới ngưỡng | '
+        f'{counts[STATUS_OVER]} vượt ngưỡng | '
+        f'{counts[STATUS_ERROR]} lỗi | '
+        f'tổng số từ: {total_words:,}'
+    )
     print('-' * 60)
 
-    if failed > 0:
-        print(f'\n⚠️  Có {failed} chương thiếu {min_words} từ, gợi ý mở rộng:')
-        print('   - Thêm mô tả chi tiết (bối cảnh, tâm lý, hành động)')
-        print('   - Bổ sung cảnh đối thoại')
-        print('   - Mở rộng nội tâm nhân vật')
-        print('   - Bồi đắp bối cảnh câu chuyện')
-        print('\n   Tham khảo: references/content-expansion.md')
+    if counts[STATUS_UNDER] > 0 or counts[STATUS_OVER] > 0:
+        print(
+            f'\nSố từ ngoài ngưỡng: xem lại nhịp chương, '
+            f'không thêm chữ chỉ để đạt ngưỡng.'
+        )
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog='check_chapter_wordcount.py',
+        description=(
+            'Kiểm tra số từ của chương và phân loại DƯỚI NGƯỠNG / TRONG NGƯỠNG / '
+            'VƯỢT NGƯỠNG. Công cụ báo cáo, không chặn build (exit 0 trừ lỗi IO/parse).'
+        ),
+    )
+    parser.add_argument(
+        'target',
+        help='Đường dẫn file chương (mặc định), hoặc thư mục khi dùng --all',
+    )
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Kiểm tra mọi chương khớp --pattern trong thư mục TARGET, thay vì một file',
+    )
+    parser.add_argument(
+        '--pattern',
+        default=DEFAULT_PATTERN,
+        help=f'Mẫu glob khi dùng --all (mặc định: {DEFAULT_PATTERN})',
+    )
+    parser.add_argument(
+        '--min',
+        dest='min_words',
+        type=int,
+        default=DEFAULT_MIN_WORDS,
+        help=f'Ngưỡng dưới, số từ (mặc định: {DEFAULT_MIN_WORDS})',
+    )
+    parser.add_argument(
+        '--max',
+        dest='max_words',
+        type=int,
+        default=DEFAULT_MAX_WORDS,
+        help=f'Ngưỡng trên, số từ (mặc định: {DEFAULT_MAX_WORDS})',
+    )
+    return parser
 
 
 def main() -> None:
-    """Hàm chính."""
-    if len(sys.argv) < 2:
-        print('Cách dùng:')
-        print('  Kiểm tra một chương: python check_chapter_wordcount.py <đường dẫn file> [số từ tối thiểu]')
-        print('  Kiểm tra tất cả:     python check_chapter_wordcount.py --all <thư mục> [số từ tối thiểu]')
-        print('')
-        print('Ví dụ:')
-        print('  python check_chapter_wordcount.py novels/truyen/Chương01.md')
-        print('  python check_chapter_wordcount.py novels/truyen/Chương01.md 3500')
-        print('  python check_chapter_wordcount.py --all novels/truyen')
-        print('  python check_chapter_wordcount.py --all novels/truyen 3500')
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    if args.all:
+        results = check_all_chapters(
+            args.target, pattern=args.pattern, min_words=args.min_words, max_words=args.max_words
+        )
+        if results is None:
+            sys.exit(1)
+        print_results(results, args.min_words, args.max_words)
+        if any(r['status'] == STATUS_ERROR for r in results):
+            sys.exit(1)
         return
 
-    if sys.argv[1] == '--all':
-        if len(sys.argv) < 3:
-            print('Lỗi: dùng --all cần chỉ định đường dẫn thư mục')
-            return
-        directory = sys.argv[2]
-        min_words = int(sys.argv[3]) if len(sys.argv) > 3 else 3000
-        results = check_all_chapters(directory, min_words=min_words)
-        print_results(results, min_words)
-        return
-
-    file_path = sys.argv[1]
-    min_words = int(sys.argv[2]) if len(sys.argv) > 2 else 3000
-    result = check_chapter(file_path, min_words)
-    print_results([result], min_words)
+    result = check_chapter(args.target, args.min_words, args.max_words)
+    print_results([result], args.min_words, args.max_words)
+    if result['status'] == STATUS_ERROR:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
