@@ -108,11 +108,15 @@ type ModelSet struct {
 }
 
 // ForRole trả về mô hình cho vai trò chỉ định; trả về mô hình mặc định nếu chưa cấu hình.
+// Đây là đường dùng single-target (không có failoverModel đứng giữa tự lo Acquire/Record),
+// nên bọc rate limit tại đây qua singleTargetModel — instance bên trong ms.models/ms.Default
+// LUÔN là ChatModel raw (xem createModelFromConfig) để tránh double-Acquire khi cùng instance
+// đó cũng được ForRoleWithFailover dùng làm primary bên trong failoverModel.
 func (ms *ModelSet) ForRole(role string) agentcore.ChatModel {
 	if m, ok := ms.models[role]; ok {
-		return m
+		return &singleTargetModel{m}
 	}
-	return ms.Default
+	return &singleTargetModel{ms.Default}
 }
 
 // ForRoleWithFailover trả về mô hình vai trò có fallback cấp độ từng yêu cầu.
@@ -120,12 +124,15 @@ func (ms *ModelSet) ForRole(role string) agentcore.ChatModel {
 func (ms *ModelSet) ForRoleWithFailover(role string, report FailoverReporter) agentcore.ChatModel {
 	primary, ok := ms.models[role]
 	if !ok {
-		return ms.Default
+		return &singleTargetModel{ms.Default}
 	}
 	targets := ms.fallbacks[role]
 	if len(targets) == 0 {
-		return primary
+		return &singleTargetModel{primary}
 	}
+	// primary/fallbacks giữ ChatModel raw; failoverModel tự Acquire/Record theo target đang
+	// chọn (rotation) — KHÔNG bọc thêm singleTargetModel ở đây, nếu không sẽ double-Acquire
+	// trên cùng 1 Limiter (deadlock khi MaxConcurrent>0, double-spend quota khi không).
 	return &failoverModel{
 		role:      role,
 		primary:   primary,
@@ -260,6 +267,14 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 }
 
 // createModelFromConfig tạo hoặc tái sử dụng instance ChatModel.
+//
+// Trả về ChatModel RAW (KHÔNG bọc rate limit) — cố ý. Instance này có thể bị dùng theo 2 kiểu
+// khác nhau tùy call site: (a) single-target trực tiếp (Default, ForRole, role không fallback)
+// — nơi cần đúng 1 lớp Acquire/Record, bọc bằng singleTargetModel tại call site; (b) target bên
+// trong failoverModel (primary hoặc fallback) — failoverModel tự Acquire/Record theo target
+// đang chọn (rotation). Nếu bọc rate limit sẵn ở đây, failoverModel sẽ double-Acquire trên cùng
+// 1 Limiter (deadlock khi MaxConcurrent>0 vì tự chờ semaphore mình đang giữ; double-spend quota
+// RPM/RPD/TPM khi MaxConcurrent=0) — xem task-C-report.md, mục Critical fix.
 func createModelFromConfig(providerKey, model string, pc ProviderConfig, cache map[string]agentcore.ChatModel) (agentcore.ChatModel, error) {
 	cacheKey := providerKey + "|" + model
 	if m, ok := cache[cacheKey]; ok {
@@ -282,19 +297,15 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, cache m
 		return nil, fmt.Errorf("provider %s (%s): %w: %w", providerKey, providerType, errs.ErrProvider, err)
 	}
 
-	// Đăng ký giới hạn hiệu lực (RPM/RPD/TPM/MaxConcurrent) vào registry global + bọc
-	// lớp rate limit (single-target, block-and-wait qua registry).
+	// Đăng ký giới hạn hiệu lực (RPM/RPD/TPM/MaxConcurrent) vào registry global. Rate limit áp
+	// dụng bằng cách bọc runtime tại call site (singleTargetModel) hoặc trong failoverModel —
+	// KHÔNG bọc ở đây.
 	eff := pc.EffectiveRateLimit(model)
 	ratelimit.Global.Register(providerKey, model, ratelimit.Limits{
 		RPM: eff.RPM, RPD: eff.RPD, TPM: eff.TPM, MaxConcurrent: eff.MaxConcurrent,
 	})
-	rlModel := &rateLimitedModel{
-		ChatModel: m,
-		provider:  providerKey,
-		model:     model,
-	}
-	cache[cacheKey] = rlModel
-	return rlModel, nil
+	cache[cacheKey] = m
+	return m, nil
 }
 
 type failoverModel struct {
@@ -561,32 +572,38 @@ func (m *failoverModel) startAttempt(ctx context.Context, target modelTarget, me
 	return nil, resp, nil
 }
 
-// rateLimitedModel bọc 1 ChatModel đơn target (không rotation): Default, role không
-// có fallback, hoặc từng fallback target riêng lẻ. Chặn-và-chờ qua registry global.
-type rateLimitedModel struct {
-	agentcore.ChatModel
-	provider string
-	model    string
+// singleTargetModel bọc 1 *SwappableModel (Default hoặc role không có fallback) để áp rate
+// limit tại nơi dùng single-target — nơi KHÔNG có failoverModel đứng giữa tự lo Acquire/Record.
+// Tra provider/model ĐỘNG qua Current() ở mỗi lần gọi (không cache tĩnh) để luôn khớp instance
+// đang thực sự được dùng, kể cả sau khi Swap() nóng lúc runtime đổi sang provider/model khác.
+//
+// Instance ChatModel bên trong (do createModelFromConfig trả về) LUÔN là raw, không tự bọc rate
+// limit — tránh double-Acquire khi cùng instance đó cũng được failoverModel dùng làm primary
+// (failoverModel tự Acquire/Record theo target đang chọn, xem rotationTargets/pickAvailable).
+type singleTargetModel struct {
+	*SwappableModel
 }
 
-func (m *rateLimitedModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
-	lim := ratelimit.Global.For(m.provider, m.model)
+func (m *singleTargetModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	provider, model := m.SwappableModel.Current()
+	lim := ratelimit.Global.For(provider, model)
 	h, err := lim.Acquire(ctx, estimateTokens(messages))
 	if err != nil {
 		return nil, err
 	}
-	resp, gerr := m.ChatModel.Generate(ctx, messages, tools, opts...)
+	resp, gerr := m.SwappableModel.Generate(ctx, messages, tools, opts...)
 	h.Record(responseTokens(resp), gerr)
 	return resp, gerr
 }
 
-func (m *rateLimitedModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
-	lim := ratelimit.Global.For(m.provider, m.model)
+func (m *singleTargetModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
+	provider, model := m.SwappableModel.Current()
+	lim := ratelimit.Global.For(provider, model)
 	h, err := lim.Acquire(ctx, estimateTokens(messages))
 	if err != nil {
 		return nil, err
 	}
-	source, serr := m.ChatModel.GenerateStream(ctx, messages, tools, opts...)
+	source, serr := m.SwappableModel.GenerateStream(ctx, messages, tools, opts...)
 	if serr != nil {
 		h.Record(0, serr)
 		return nil, serr
