@@ -82,7 +82,40 @@ func buildStoryStateSummary(s *store.Store) string {
 		fmt.Fprintf(&b, "- Phục bút chưa thu：%s\n", strings.Join(items, "；"))
 	}
 
+	// Đoạn kết chương gần nhất: giúp trợ lý "đọc trang cuối" trước khi bàn hướng đi tiếp theo,
+	// thay vì chỉ dựa vào metadata cấp cao ở trên. Best-effort — lỗi load hoặc chưa có chương
+	// hoàn thành nào thì bỏ qua mục này, không fail cả bản tóm tắt.
+	if progress, _ := s.Progress.Load(); progress != nil {
+		if latest := progress.LatestCompleted(); latest > 0 {
+			if text, err := s.Drafts.LoadChapterText(latest); err == nil {
+				if tail := tailFromParagraphBoundary(text, 800); tail != "" {
+					fmt.Fprintf(&b, "\n## Đoạn kết chương gần nhất\n%s\n", tail)
+				}
+			}
+		}
+	}
+
 	return strings.TrimSpace(b.String())
+}
+
+// tailFromParagraphBoundary lấy tối đa maxRunes rune cuối cùng của s (cắt tại ranh giới rune an
+// toàn, không chẻ đôi ký tự đa byte), sau đó ưu tiên bắt đầu đoạn trích tại ranh giới đoạn văn
+// (\n\n) gần nhất trong phạm vi đã cắt, tránh mở đầu giữa câu dở dang. Nếu không tìm thấy ranh
+// giới đoạn văn phù hợp, giữ nguyên phần đã cắt theo rune.
+func tailFromParagraphBoundary(s string, maxRunes int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		runes = runes[len(runes)-maxRunes:]
+	}
+	tail := string(runes)
+	if idx := strings.Index(tail, "\n\n"); idx >= 0 && idx+2 < len(tail) {
+		tail = tail[idx+2:]
+	}
+	return strings.TrimSpace(tail)
 }
 
 // stageSystemPrompt tạo system prompt đầy đủ cho đồng sáng tác theo giai đoạn: stage prompt + bản tóm tắt trạng thái truyện hiện tại.

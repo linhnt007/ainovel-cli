@@ -185,3 +185,68 @@ func TestBuildStoryStateSummary_Populated(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildStoryStateSummary_LatestChapterTail kiểm tra khi đã có chương hoàn thành trong store,
+// summary phải chứa mục "đọc trang cuối" với đuôi văn bản không vượt quá ~800 rune.
+func TestBuildStoryStateSummary_LatestChapterTail(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init("影之诗", 100); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := st.Progress.Load()
+	p.CompletedChapters = []int{1, 2}
+	if err := st.Progress.Save(p); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chương 1 không phải chương hoàn thành gần nhất — không được dùng làm nguồn đuôi văn bản.
+	if err := st.Drafts.SaveFinalChapter(1, "第一章的内容，不应该被使用。"); err != nil {
+		t.Fatal(err)
+	}
+	// Dựng nội dung chương 2 đủ dài (vượt 800 rune) để kiểm tra việc cắt đuôi.
+	para := strings.Repeat("这是结尾前的段落文字用于填充篇幅。", 40) // ~600 rune mỗi đoạn lặp lại
+	lastPara := "这是最后一段，讲述主角决定连夜出发前往边境，去查明失踪的师兄下落，心中充满忧虑与决心。"
+	content := para + "\n\n" + para + "\n\n" + lastPara
+	if err := st.Drafts.SaveFinalChapter(2, content); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buildStoryStateSummary(st)
+	if !strings.Contains(got, "## Đoạn kết chương gần nhất") {
+		t.Fatalf("summary phải chứa tiêu đề mục đuôi văn bản, thực tế:\n%s", got)
+	}
+	if !strings.Contains(got, lastPara) {
+		t.Fatalf("đuôi văn bản phải chứa đoạn kết thúc thật của chương gần nhất, thực tế:\n%s", got)
+	}
+	if strings.Contains(got, "不应该被使用") {
+		t.Fatalf("không được lấy nội dung từ chương không phải chương hoàn thành gần nhất, thực tế:\n%s", got)
+	}
+
+	idx := strings.Index(got, "## Đoạn kết chương gần nhất")
+	tailSection := strings.TrimSpace(got[idx+len("## Đoạn kết chương gần nhất"):])
+	if n := len([]rune(tailSection)); n > 800 {
+		t.Errorf("đuôi văn bản phải ≤ ~800 rune, thực tế %d rune", n)
+	}
+}
+
+// TestBuildStoryStateSummary_NoCompletedChapter kiểm tra khi chưa có chương nào hoàn thành,
+// summary không được thêm mục đuôi văn bản và không panic.
+func TestBuildStoryStateSummary_NoCompletedChapter(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init("空白之书", 100); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buildStoryStateSummary(st)
+	if strings.Contains(got, "Đoạn kết chương gần nhất") {
+		t.Errorf("chưa có chương hoàn thành thì không được thêm mục đuôi văn bản, thực tế:\n%s", got)
+	}
+}
