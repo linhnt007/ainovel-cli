@@ -196,18 +196,25 @@ func TestCheck_ChapterWordsSlightlyAbove(t *testing.T) {
 }
 
 func TestCheck_AutoWordCount(t *testing.T) {
-	// Khi wordCount = -1, checker tự tính số từ
-	text := strings.Repeat("汉", 2500) // 2500 ký tự Hán
+	// Khi wordCount = -1, checker tự tính số từ theo CountWords (tách khoảng trắng), KHÔNG phải
+	// theo rune — đây chính là bug đã sửa (xem part-A-brief). Dùng fixture tiếng Việt "con " lặp
+	// lại: mỗi từ có 3 rune + 1 dấu cách, nên số từ và số rune cố tình lệch nhau để phép test
+	// không thể tình cờ đúng cả hai cách đếm.
+	words := 2500
+	text := strings.TrimSpace(strings.Repeat("con ", words)) // 2500 từ, nhưng 9999 rune
+	if utf8.RuneCountInString(text) == words {
+		t.Fatalf("fixture invalid: rune count phải khác word count để test có ý nghĩa")
+	}
 	rng := &WordRange{Min: 3000, Max: 6000}
 	vs := Check(text, -1, Structured{ChapterWords: rng})
 	if len(vs) != 1 || vs[0].Rule != "chapter_words" {
 		t.Fatalf("expected 1 chapter_words violation, got %+v", vs)
 	}
-	if vs[0].Actual != 2500 {
-		t.Errorf("auto wordCount=%v, want 2500", vs[0].Actual)
+	if vs[0].Actual != words {
+		t.Errorf("auto wordCount=%v, want %d (đếm theo từ, không phải rune)", vs[0].Actual, words)
 	}
-	if vs[0].Actual != utf8.RuneCountInString(text) {
-		t.Errorf("auto count mismatch: %v vs rune count %d", vs[0].Actual, utf8.RuneCountInString(text))
+	if vs[0].Actual == utf8.RuneCountInString(text) {
+		t.Errorf("auto count phải khác rune count (%d) để chứng minh không còn đếm theo rune", utf8.RuneCountInString(text))
 	}
 }
 

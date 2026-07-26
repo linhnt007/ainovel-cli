@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/rules"
 )
 
 // DraftStore quản lý kế hoạch chương, bản nháp và bản chính thức.
@@ -67,14 +68,16 @@ func (s *DraftStore) LoadDraft(chapter int) (string, error) {
 	return string(data), nil
 }
 
-// LoadChapterContent tải nội dung bản nháp chương và số ký tự.
+// LoadChapterContent tải nội dung bản nháp chương và số từ (đếm theo từ tách khoảng trắng
+// qua rules.CountWords — không phải rune, vì rule chapter_words và các thống kê tiến độ
+// đều định nghĩa "số từ" theo nghĩa tiếng Việt, khác với rune Hán tự của bản gốc).
 func (s *DraftStore) LoadChapterContent(chapter int) (string, int, error) {
 	draft, err := s.LoadDraft(chapter)
 	if err != nil {
 		return "", 0, err
 	}
 	if draft != "" {
-		return draft, utf8.RuneCountInString(draft), nil
+		return draft, rules.CountWords(draft), nil
 	}
 	return "", 0, nil
 }

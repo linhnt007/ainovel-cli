@@ -3,7 +3,6 @@ package rules
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 )
 
 // Check thực hiện kiểm tra cơ học nội dung chương theo các quy tắc có cấu trúc, trả về danh sách vi phạm thực tế.
@@ -15,14 +14,14 @@ import (
 //
 // Tham số:
 //   - text: nội dung chương (bản cuối hoặc bản nháp đều được)
-//   - wordCount: số từ của chương (đếm theo rune). Nếu <0, checker tự tính để tránh caller quét O(n) lặp lại.
+//   - wordCount: số từ của chương (đếm theo từ tách khoảng trắng, xem CountWords). Nếu <0, checker tự tính để tránh caller quét O(n) lặp lại.
 //   - s: quy tắc có cấu trúc đã hợp nhất; nếu IsEmpty thì trả về nil luôn.
 func Check(text string, wordCount int, s Structured) []Violation {
 	if s.IsEmpty() {
 		return nil
 	}
 	if wordCount < 0 {
-		wordCount = utf8.RuneCountInString(text)
+		wordCount = CountWords(text)
 	}
 
 	var violations []Violation
