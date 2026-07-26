@@ -111,10 +111,10 @@ func TestCheck_FatigueWordsOverLimit(t *testing.T) {
 //   actual 3000 → trong khoảng → no violation
 //   actual 2999 → deviation ≈ 0.033% → warning
 //   actual 2401 → deviation = 599/3000 ≈ 19.97% → warning
-//   actual 2400 → deviation = 600/3000 = 20% → error (>= threshold)
+//   actual 2400 → deviation = 600/3000 = 20% → warning (severity chapter_words luôn warning, không escalate error)
 //   actual 6001 → deviation ≈ 0.017% → warning
 //   actual 7199 → deviation ≈ 19.98% → warning
-//   actual 7200 → deviation = 1200/6000 = 20% → error
+//   actual 7200 → deviation = 1200/6000 = 20% → warning
 
 func TestCheck_ChapterWordsInRange(t *testing.T) {
 	rng := &WordRange{Min: 3000, Max: 6000}
@@ -149,23 +149,40 @@ func TestCheck_ChapterWordsSlightlyBelow(t *testing.T) {
 }
 
 func TestCheck_ChapterWordsAtThreshold(t *testing.T) {
-	// actual 2400 → deviation = 600/3000 = 0.2 == 20% → error (>= threshold)
+	// actual 2400 → deviation = 600/3000 = 0.2 == 20%, nhưng chapter_words không bao giờ escalate
+	// lên error (tránh chặn cứng commit_chapter / vòng viết lại vô ích) — vẫn chỉ là warning.
 	rng := &WordRange{Min: 3000, Max: 6000}
 	vs := Check("", 2400, Structured{ChapterWords: rng})
-	if len(vs) != 1 || vs[0].Severity != SeverityError {
-		t.Errorf("expected error at 20%% threshold, got %+v", vs)
+	if len(vs) != 1 || vs[0].Severity != SeverityWarning {
+		t.Errorf("expected warning (never error) at 20%% threshold, got %+v", vs)
+	}
+	if vs[0].Deviation != 0.2 {
+		t.Errorf("deviation=%v, want 0.2", vs[0].Deviation)
 	}
 }
 
 func TestCheck_ChapterWordsAboveMax(t *testing.T) {
-	// actual 7200 → deviation = 1200/6000 = 0.2 == 20% → error
+	// actual 7200 → deviation = 1200/6000 = 0.2 == 20%, vẫn chỉ là warning (xem TestCheck_ChapterWordsAtThreshold).
 	rng := &WordRange{Min: 3000, Max: 6000}
 	vs := Check("", 7200, Structured{ChapterWords: rng})
-	if len(vs) != 1 || vs[0].Severity != SeverityError {
-		t.Errorf("expected error at 20%% above max, got %+v", vs)
+	if len(vs) != 1 || vs[0].Severity != SeverityWarning {
+		t.Errorf("expected warning (never error) at 20%% above max, got %+v", vs)
 	}
 	if vs[0].Actual != 7200 {
 		t.Errorf("actual=%v, want 7200", vs[0].Actual)
+	}
+}
+
+// TestCheck_ChapterWordsNeverErrorEvenAtExtremeDeviation đảm bảo chapter_words không bao giờ
+// tạo severity error dù độ lệch cực lớn (ví dụ actual=0 hoặc actual gấp nhiều lần max) — chỉ
+// forbidden_chars/forbidden_phrases mới có severity error.
+func TestCheck_ChapterWordsNeverErrorEvenAtExtremeDeviation(t *testing.T) {
+	rng := &WordRange{Min: 3000, Max: 6000}
+	for _, actual := range []int{0, 1, 100000} {
+		vs := Check("", actual, Structured{ChapterWords: rng})
+		if len(vs) != 1 || vs[0].Severity != SeverityWarning {
+			t.Errorf("actual=%d: expected single warning violation, got %+v", actual, vs)
+		}
 	}
 }
 

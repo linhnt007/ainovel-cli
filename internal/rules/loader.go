@@ -100,11 +100,34 @@ func readDirFromDisk(dir string, kind SourceKind) []Parsed {
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
+	fi, statErr := os.Stat(dir)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
 			return nil
 		}
+		return []Parsed{{
+			Source: dir,
+			Kind:   kind,
+			Conflicts: []Conflict{{
+				Source: dir,
+				Kind:   ConflictParseError,
+				Detail: "đọc thư mục quy tắc thất bại: " + statErr.Error(),
+			}},
+		}}
+	}
+	if !fi.IsDir() {
+		return []Parsed{{
+			Source: dir,
+			Kind:   kind,
+			Conflicts: []Conflict{{
+				Source: dir,
+				Kind:   ConflictParseError,
+				Detail: "đọc thư mục quy tắc thất bại: not a directory",
+			}},
+		}}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return []Parsed{{
 			Source: dir,
 			Kind:   kind,
@@ -173,12 +196,13 @@ Những điều này sẽ được giao nguyên cho biên tập viên xem xét t
 file ẩn bắt đầu bằng dấu chấm và file không phải .md đều bị bỏ qua (nên README.txt này sẽ không bị coi là quy tắc).
 
 Nâng cao (tùy chọn): muốn kiểm tra cứng, xác định như "số từ / từ cấm",
-có thể thêm một đoạn YAML front matter ở đầu file — commit_chapter sẽ đếm từng chữ, báo lỗi bắt buộc:
+có thể thêm một đoạn YAML front matter ở đầu file — commit_chapter sẽ kiểm tra cơ học và trả về rule_violations
+(forbidden_chars/forbidden_phrases luôn error; chapter_words/fatigue_words chỉ warning, không chặn commit):
 
     ---
-    chapter_words: 3000-6000          # phạm vi số từ mỗi chương
-    forbidden_phrases: ["theo một nghĩa nào đó"]  # cụm từ bị cấm, xuất hiện là báo lỗi
-    fatigue_words: {không khỏi: 1}    # từ sáo rỗng, vượt ngưỡng mỗi chương sẽ cảnh báo
+    chapter_words: 3000-6000          # phạm vi số từ mỗi chương (đếm từ thật, tách khoảng trắng); lệch phạm vi = warning
+    forbidden_phrases: ["theo một nghĩa nào đó"]  # cụm từ bị cấm, xuất hiện là báo lỗi (error)
+    fatigue_words: {không khỏi: 1}    # từ sáo rỗng, vượt ngưỡng mỗi chương sẽ cảnh báo (warning)
     ---
     (bên dưới viết tùy chọn ngôn ngữ tự nhiên như bình thường)
 

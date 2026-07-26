@@ -114,6 +114,14 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if err := decode("layered_outline", &volumes); err != nil {
 			return nil, err
 		}
+		if len(volumes) == 0 {
+			return nil, fmt.Errorf("layered_outline requires at least one volume: %w", errs.ErrToolArgs)
+		}
+		for _, vol := range volumes {
+			if len(vol.Arcs) == 0 {
+				return nil, fmt.Errorf("volume %d (%s) requires at least one arc: %w", vol.Index, vol.Title, errs.ErrToolArgs)
+			}
+		}
 		if err := t.store.Outline.SaveLayeredOutline(volumes); err != nil {
 			return nil, fmt.Errorf("save layered_outline: %w: %w", errs.ErrStoreWrite, err)
 		}
@@ -173,6 +181,9 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		var vol domain.VolumeOutline
 		if err := decode("append_volume", &vol); err != nil {
 			return nil, err
+		}
+		if len(vol.Arcs) == 0 {
+			return nil, fmt.Errorf("append_volume requires at least one arc in volume %d: %w", vol.Index, errs.ErrToolArgs)
 		}
 		if err := t.store.AppendVolume(vol); err != nil {
 			return nil, fmt.Errorf("append volume: %w: %w", errs.ErrStoreWrite, err)

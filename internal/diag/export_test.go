@@ -86,7 +86,7 @@ func TestExport_DeathLoopShape(t *testing.T) {
 		t.Errorf("Tổng hợp lặp chưa liệt kê ×14\n%s", out)
 	}
 	// Phase 2: kiểm tra runtime phải phân loại vòng lặp này là RepeatedToolError mức critical.
-	if !strings.Contains(out, "工具反复报同一错误") {
+	if !strings.Contains(out, "Công cụ lặp lại cùng một lỗi") {
 		t.Errorf("Kiểm tra runtime chưa tạo ra RepeatedToolError\n%s", out)
 	}
 	if !strings.Contains(out, "[critical]") {

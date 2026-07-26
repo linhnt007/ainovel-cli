@@ -223,7 +223,8 @@ func PersistChapter(
 	if err != nil {
 		return fmt.Errorf("marshal commit args ch%d: %w", chapter, err)
 	}
-	if _, err := commitTool.Execute(ctx, raw); err != nil {
+	importCtx := context.WithValue(ctx, "import_mode", true)
+	if _, err := commitTool.Execute(importCtx, raw); err != nil {
 		return fmt.Errorf("commit ch%d: %w", chapter, err)
 	}
 	return nil

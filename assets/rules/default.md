@@ -11,7 +11,12 @@
 # fatigue_words được hợp nhất theo từng từ, cùng một từ thì nguồn gần hơn ghi đè ngưỡng.
 # Xem chi tiết ngữ nghĩa các trường tại rules.md.example ở thư mục gốc dự án.
 
-# Giới hạn số từ mỗi chương: cảnh báo nếu lệch <20%; lỗi nếu lệch ≥20%.
+# Giới hạn số từ mỗi chương (đếm TỪ THẬT, tách theo khoảng trắng — không phải đếm ký tự/rune):
+# luôn chỉ cảnh báo (warning) khi lệch khỏi phạm vi, dù lệch bao nhiêu cũng không chặn commit.
+# Phạm vi 3000-6000 kế thừa từ ví dụ tham chiếu chuẩn của dự án (xem rules.md.example,
+# loader.go) — độ dài chương tiểu thuyết mạng phổ biến; KHÔNG dùng số ký tự Hán tự làm
+# ngưỡng vì rune tiếng Việt (gồm dấu cách + âm tiết) không tương đương mật độ thông tin
+# của Hán tự, dẫn đến ngưỡng bị hiệu chỉnh sai lệch nếu đếm theo rune.
 chapter_words: 3000-6000
 
 # Danh sách cụm từ cấm: xuất hiện ≥1 lần là error. Bộ kiểm tra so khớp chuỗi con

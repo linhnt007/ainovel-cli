@@ -88,7 +88,7 @@ Biên tập chất lượng văn học của bản gốc. Mỗi mục con **bắ
 | `forbidden_chars` | aesthetic | severity=error → ít nhất một issue, verdict nâng lên polish |
 | `forbidden_phrases` | aesthetic | Như trên |
 | `fatigue_words` | aesthetic | severity=warning → một issue, evidence trích dẫn bản gốc |
-| `chapter_words` | pacing | severity=error → polish/rewrite; warning → tùy tình huống |
+| `chapter_words` | pacing | luôn severity=warning (không escalate error) → tùy tình huống, tham khảo cùng `deviation` để đánh giá mức độ lệch |
 
 Sở thích ngôn ngữ tự nhiên trong `preferences` phân loại theo ngữ nghĩa:
 
@@ -124,7 +124,7 @@ Ví dụ hình dạng đúng:
   {"dimension": "continuity", "score": 85, "comment": "Tiếp nối trạng thái cung truyện trước"},
   {"dimension": "foreshadow", "score": 82, "comment": "Phục bút có tiến triển"},
   {"dimension": "hook", "score": 80, "comment": "Cuối chương có sức kéo tiếp theo"},
-  {"dimension": "aesthetic", "score": 83, "comment": "Bản gốc「……」thể hiện sự biểu đạt kiềm chế"}
+  {"dimension": "aesthetic", "score": 83, "comment": "Bản gốc \"……\" thể hiện sự biểu đạt kiềm chế"}
 ]
 ```
 

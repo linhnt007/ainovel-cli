@@ -3,7 +3,9 @@ package notify
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +30,15 @@ func TestAllowsFilter(t *testing.T) {
 }
 
 func TestCommandChannelEnvAndStdin(t *testing.T) {
+	// Kênh command chạy `sh -c`; test này nhúng đường dẫn file tạm vào chuỗi lệnh sh.
+	// Trên Windows (kể cả khi có sh của git-bash trong PATH) đường dẫn kiểu C:\... bị sh
+	// diễn giải dấu \ thành escape nên redirect hỏng. Đây là test UNIX shell, bỏ qua trên Windows.
+	if runtime.GOOS == "windows" {
+		t.Skip("test UNIX shell (đường dẫn Windows không tương thích sh), bỏ qua trên Windows")
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not found in PATH, skipping UNIX shell command test")
+	}
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, "env.txt")
 	jsonFile := filepath.Join(dir, "stdin.json")
@@ -58,6 +69,9 @@ func TestCommandChannelEnvAndStdin(t *testing.T) {
 }
 
 func TestCommandChannelTimeoutKill(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not found in PATH, skipping UNIX shell command test")
+	}
 	n := New("sleep 30", nil)
 	n.timeout = 200 * time.Millisecond
 

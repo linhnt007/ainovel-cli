@@ -143,6 +143,9 @@ func TestDraftChapterWrite(t *testing.T) {
 	if err := store.Progress.Init("test", 10); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
+	if err := store.Drafts.SaveChapterPlan(domain.ChapterPlan{Chapter: 1, Title: "test", Goal: "test"}); err != nil {
+		t.Fatalf("SaveChapterPlan: %v", err)
+	}
 
 	tool := NewDraftChapterTool(store)
 	args, _ := json.Marshal(map[string]any{
@@ -200,6 +203,9 @@ func TestDraftChapterAppend(t *testing.T) {
 	}
 	if err := store.Drafts.SaveDraft(2, "前半部分。"); err != nil {
 		t.Fatalf("SaveDraft: %v", err)
+	}
+	if err := store.Drafts.SaveChapterPlan(domain.ChapterPlan{Chapter: 2, Title: "test", Goal: "test"}); err != nil {
+		t.Fatalf("SaveChapterPlan: %v", err)
 	}
 
 	tool := NewDraftChapterTool(store)
@@ -296,6 +302,7 @@ func TestDraftChapterRejectsCompleted(t *testing.T) {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	_ = s.Drafts.SaveDraft(1, "第一章正文")
+	_ = s.Drafts.SaveChapterPlan(domain.ChapterPlan{Chapter: 1, Title: "test", Goal: "test"})
 	_ = s.Progress.StartChapter(1)
 	_ = s.Progress.MarkChapterComplete(1, 3000, "", "")
 

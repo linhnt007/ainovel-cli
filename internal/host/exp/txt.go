@@ -58,8 +58,10 @@ func buildLocations(volumes []domain.VolumeOutline) map[int]chapterLocation {
 	return locs
 }
 
-// chapterHeaderRe khớp dòng đầu tiêu đề Markdown có số chương (# 第N章 / ## 第 12 章 ...).
-var chapterHeaderRe = regexp.MustCompile(`^#+\s+第.+?章`)
+// chapterHeaderRe khớp dòng đầu tiêu đề Markdown có số chương, song ngữ:
+// tiếng Việt "# Chương 12" / "## Chương 12: ..." và tiếng Trung "# 第N章" / "## 第 12 章"
+// (giữ nhánh Trung để vẫn bóc đúng header khi import/xuất truyện gốc tiếng Trung).
+var chapterHeaderRe = regexp.MustCompile(`^#+\s+(?:第.+?章|[Cc]hương\s*\d+)`)
 
 // atxTitleRe trích xuất phần văn bản của tiêu đề ATX (# tiêu đề).
 var atxTitleRe = regexp.MustCompile(`^#{1,6}\s+(.+?)\s*$`)
@@ -97,7 +99,7 @@ func isChapterTitleLine(line, title string) bool {
 //
 // Thứ tự chương do chapters quyết định (bên gọi đã sắp xếp tăng dần và loại trùng theo số chương).
 // bodies/titleIdx/locations đều xử lý theo kiểu "thiếu thì hạ cấp": thiếu tiêu đề chỉ xuất
-// "第 N 章"; thiếu định vị phân cấp thì coi như đề cương phẳng.
+// "Chương N"; thiếu định vị phân cấp thì coi như đề cương phẳng.
 func renderTXT(
 	novelName string,
 	chapters []int,
@@ -119,16 +121,16 @@ func renderTXT(
 		if useLayered {
 			if loc, ok := locations[ch]; ok && loc.IsFirstOfVolume {
 				b.WriteString("\n═══════════════════════════════════════════\n")
-				fmt.Fprintf(&b, "           第 %d 卷  %s\n", loc.VolumeIdx, strings.TrimSpace(loc.VolumeTitle))
+				fmt.Fprintf(&b, "           Tập %d  %s\n", loc.VolumeIdx, strings.TrimSpace(loc.VolumeTitle))
 				b.WriteString("═══════════════════════════════════════════\n\n")
 			}
 		}
 
 		title := strings.TrimSpace(titleIdx[ch])
 		if title != "" {
-			fmt.Fprintf(&b, "第 %d 章  %s\n\n", ch, title)
+			fmt.Fprintf(&b, "Chương %d  %s\n\n", ch, title)
 		} else {
-			fmt.Fprintf(&b, "第 %d 章\n\n", ch)
+			fmt.Fprintf(&b, "Chương %d\n\n", ch)
 		}
 
 		body := stripChapterTitleHeader(strings.TrimSpace(bodies[ch]), title)

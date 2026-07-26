@@ -97,7 +97,10 @@ func appendFatigueWords(vs []Violation, text string, m map[string]int) []Violati
 }
 
 // chapter_words: độ lệch số từ.
-// Độ lệch < 20%: warning; độ lệch ≥ 20%: error.
+// Luôn là warning bất kể độ lệch bao nhiêu — không nâng lên error để tránh chặn cứng commit_chapter
+// và ép Writer vào vòng lặp viết lại vô ích khi ngưỡng cấu hình (chapter_words) bị hiệu chỉnh sai hoặc
+// lệch giữa ngôn ngữ. ChapterWordsDeviationThreshold vẫn giữ để tham khảo/hiển thị mức độ lệch, không
+// còn quyết định severity. Chỉ forbidden_chars/forbidden_phrases mới có severity error.
 // Công thức độ lệch: thấp hơn min dùng (min-actual)/min; cao hơn max dùng (actual-max)/max.
 func appendChapterWords(vs []Violation, wordCount int, rng *WordRange) []Violation {
 	if rng == nil {
@@ -119,16 +122,20 @@ func appendChapterWords(vs []Violation, wordCount int, rng *WordRange) []Violati
 		return vs // trong phạm vi cho phép
 	}
 
-	severity := SeverityWarning
-	if deviation >= ChapterWordsDeviationThreshold {
-		severity = SeverityError
-	}
 	vs = append(vs, Violation{
 		Rule:      "chapter_words",
 		Limit:     fmt.Sprintf("%d-%d", rng.Min, rng.Max),
 		Actual:    wordCount,
 		Deviation: deviation,
-		Severity:  severity,
+		Severity:  SeverityWarning,
 	})
 	return vs
+}
+
+// CountWords đếm số TỪ THẬT của văn bản, tách theo khoảng trắng (strings.Fields tự lọc token rỗng).
+// Dùng riêng cho rule chapter_words — khác với domain.WordCount (đếm rune, dùng cho hiển thị/tổng số từ
+// tiến độ/thống kê phong cách), vốn đếm ký tự chứ không phải từ và không phù hợp làm ngưỡng "số từ mỗi chương"
+// cho văn bản tiếng Việt (rune tiếng Việt không tương đương Hán tự về mật độ thông tin).
+func CountWords(text string) int {
+	return len(strings.Fields(text))
 }

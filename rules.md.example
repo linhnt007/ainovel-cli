@@ -13,7 +13,8 @@
 # chưa mở; khi nào cần tải file nội trang theo thể loại một cách máy móc thì mới khôi phục loader hai giai đoạn.
 genre: xianxia
 
-# Số từ mỗi chương (min-max). Lệch < 20% báo warning; ≥ 20% báo error.
+# Số từ mỗi chương (min-max, đếm từ thật tách theo khoảng trắng). Lệch khỏi phạm vi luôn chỉ báo warning
+# (không escalate thành error, tránh chặn cứng commit_chapter / vòng viết lại vô ích).
 chapter_words: 3000-6000
 
 # Danh sách đen ký tự/ký hiệu. Xuất hiện ≥ 1 lần là error.

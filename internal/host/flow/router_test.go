@@ -47,8 +47,8 @@ func TestRoute_PendingRewritesFirst(t *testing.T) {
 	if got == nil || got.Agent != "writer" {
 		t.Fatalf("expected writer for rewrites, got %+v", got)
 	}
-	if got.Task != "重写第 3 章" {
-		t.Errorf("expected '重写第 3 章', got %q", got.Task)
+	if got.Task != "Viết lại chương 3" {
+		t.Errorf("expected 'Viết lại chương 3', got %q", got.Task)
 	}
 	if got.Chapter != 3 {
 		t.Errorf("expected Chapter=3, got %d", got.Chapter)
@@ -59,7 +59,7 @@ func TestRoute_PendingPolishingVerb(t *testing.T) {
 	p := writingProgress([]int{1}, domain.FlowPolishing)
 	p.PendingRewrites = []int{2}
 	got := Route(State{Progress: p})
-	if got == nil || got.Task != "打磨第 2 章" {
+	if got == nil || got.Task != "Đánh bóng chương 2" {
 		t.Fatalf("expected polish verb, got %+v", got)
 	}
 }
@@ -93,7 +93,7 @@ func TestRoute_ArcEndNeedsReview(t *testing.T) {
 	if got == nil || got.Agent != "editor" {
 		t.Fatalf("expected editor for arc review, got %+v", got)
 	}
-	if got.Reason != "弧末评审未完成" {
+	if got.Reason != "Đánh giá cuối cung truyện chưa hoàn thành" {
 		t.Errorf("reason mismatch: %q", got.Reason)
 	}
 }
@@ -111,7 +111,7 @@ func TestRoute_ArcEndHasReviewNeedsSummary(t *testing.T) {
 		HasArcReview: true,
 	}
 	got := Route(s)
-	if got == nil || got.Agent != "editor" || got.Reason != "弧摘要未完成" {
+	if got == nil || got.Agent != "editor" || got.Reason != "Tóm tắt cung truyện chưa hoàn thành" {
 		t.Fatalf("expected arc summary editor call, got %+v", got)
 	}
 }
@@ -131,7 +131,7 @@ func TestRoute_VolumeEndNeedsVolumeSummary(t *testing.T) {
 		HasArcSummary: true,
 	}
 	got := Route(s)
-	if got == nil || got.Reason != "卷摘要未完成" {
+	if got == nil || got.Reason != "Tóm tắt tập chưa hoàn thành" {
 		t.Fatalf("expected volume summary request, got %+v", got)
 	}
 }
@@ -156,7 +156,7 @@ func TestRoute_NeedsArcExpansion(t *testing.T) {
 	if got == nil || got.Agent != "architect_long" {
 		t.Fatalf("expected architect_long for expansion, got %+v", got)
 	}
-	if got.Reason != "下一弧骨架待展开" {
+	if got.Reason != "Skeleton cung truyện tiếp theo cần được mở rộng" {
 		t.Errorf("reason mismatch: %q", got.Reason)
 	}
 }
@@ -178,7 +178,7 @@ func TestRoute_NeedsNewVolume(t *testing.T) {
 		HasVolumeSummary: true,
 	}
 	got := Route(s)
-	if got == nil || got.Agent != "architect_long" || got.Reason != "卷末需决定追加新卷或结束全书" {
+	if got == nil || got.Agent != "architect_long" || got.Reason != "Cuối tập cần quyết định thêm tập mới hay kết thúc toàn bộ tác phẩm" {
 		t.Fatalf("expected append_volume/complete_book dispatch, got %+v", got)
 	}
 }
@@ -190,8 +190,8 @@ func TestRoute_NormalContinue(t *testing.T) {
 	if got == nil || got.Agent != "writer" {
 		t.Fatalf("expected writer for next chapter, got %+v", got)
 	}
-	if got.Task != "写第 4 章" {
-		t.Errorf("expected '写第 4 章', got %q", got.Task)
+	if got.Task != "Viết chương 4" {
+		t.Errorf("expected 'Viết chương 4', got %q", got.Task)
 	}
 	if got.Chapter != 4 {
 		t.Errorf("expected Chapter=4, got %d", got.Chapter)
@@ -219,8 +219,8 @@ func TestRoute_ArcEndNonLayeredSkipsBoundary(t *testing.T) {
 }
 
 func TestFormatMessage(t *testing.T) {
-	msg := FormatMessage(&Instruction{Agent: "writer", Task: "写第 5 章", Reason: "续写"})
-	for _, want := range []string{"[Host 下达指令]", "writer", "写第 5 章", "续写", "不要先调 novel_context"} {
+	msg := FormatMessage(&Instruction{Agent: "writer", Task: "Viết chương 5", Reason: "tiếp tục"})
+	for _, want := range []string{"[Host ra lệnh]", "writer", "Viết chương 5", "tiếp tục", "không được gọi novel_context"} {
 		if !contains(msg, want) {
 			t.Errorf("message missing %q: %s", want, msg)
 		}
@@ -239,7 +239,7 @@ func contains(s, sub string) bool {
 func TestDispatcher_TrackRepeat(t *testing.T) {
 	// Không cần coordinator / store thật; trackRepeat chỉ đọc cache nội bộ.
 	d := &Dispatcher{}
-	inst := &Instruction{Agent: "writer", Task: "写第 5 章", Reason: "续写"}
+	inst := &Instruction{Agent: "writer", Task: "Viết chương 5", Reason: "tiếp tục"}
 	if got := d.trackRepeat(inst); got != 1 {
 		t.Fatalf("lần đầu hạ lệnh phải tính 1, got %d", got)
 	}
@@ -247,11 +247,11 @@ func TestDispatcher_TrackRepeat(t *testing.T) {
 		t.Fatalf("cùng Agent+Task lặp lại phải tính 2, got %d", got)
 	}
 	// Reason khác nhau, Agent+Task giống nhau vẫn coi là cùng lệnh và tiếp tục cộng dồn
-	sameTaskDiffReason := &Instruction{Agent: "writer", Task: "写第 5 章", Reason: "弧末后继续"}
+	sameTaskDiffReason := &Instruction{Agent: "writer", Task: "Viết chương 5", Reason: "弧末后继续"}
 	if got := d.trackRepeat(sameTaskDiffReason); got != 3 {
 		t.Fatalf("chỉ khác Reason vẫn tính là lặp, cộng dồn lên 3, got %d", got)
 	}
-	other := &Instruction{Agent: "writer", Task: "写第 6 章", Reason: "续写"}
+	other := &Instruction{Agent: "writer", Task: "Viết chương 6", Reason: "tiếp tục"}
 	if got := d.trackRepeat(other); got != 1 {
 		t.Fatalf("Task thay đổi phải reset về 1, got %d", got)
 	}
@@ -262,13 +262,13 @@ func TestDispatcher_TrackRepeat(t *testing.T) {
 }
 
 func TestFormatDispatchMessage_RepeatNotice(t *testing.T) {
-	inst := &Instruction{Agent: "writer", Task: "写第 5 章", Reason: "续写"}
+	inst := &Instruction{Agent: "writer", Task: "Viết chương 5", Reason: "tiếp tục"}
 	first := formatDispatchMessage(inst, 1)
 	if first != FormatMessage(inst) {
 		t.Fatalf("lần đầu hạ lệnh không được đính kèm ghi chú lặp: %s", first)
 	}
 	third := formatDispatchMessage(inst, 3)
-	for _, want := range []string{"第 3 次下达", "路由事实未变化", "novel_context", "改派"} {
+	for _, want := range []string{"lần thứ 3", "sự thật route chưa thay đổi", "novel_context", "chuyển sang agent phụ khác"} {
 		if !contains(third, want) {
 			t.Errorf("ghi chú lặp thiếu %q: %s", want, third)
 		}
@@ -282,16 +282,16 @@ func TestDispatcher_OnRepeatFiresOnceAtThreshold(t *testing.T) {
 		fired = append(fired, fmt.Sprintf("%s|%s|%d", agent, task, n))
 	})
 
-	inst := &Instruction{Agent: "writer", Task: "写第 5 章"}
+	inst := &Instruction{Agent: "writer", Task: "Viết chương 5"}
 	for range 6 {
 		d.trackRepeat(inst) // n=1..6: chỉ callback đúng một lần khi n==3
 	}
-	if len(fired) != 1 || fired[0] != fmt.Sprintf("writer|写第 5 章|%d", repeatNotifyAt) {
+	if len(fired) != 1 || fired[0] != fmt.Sprintf("writer|Viết chương 5|%d", repeatNotifyAt) {
 		t.Fatalf("phải trigger đúng một lần tại lần thứ %d, got %v", repeatNotifyAt, fired)
 	}
 
 	// Sau khi đổi key sẽ được tái vũ trang: đổi task rồi lặp tiếp 3 lần → trigger thêm một lần
-	other := &Instruction{Agent: "writer", Task: "写第 6 章"}
+	other := &Instruction{Agent: "writer", Task: "Viết chương 6"}
 	for range 3 {
 		d.trackRepeat(other)
 	}

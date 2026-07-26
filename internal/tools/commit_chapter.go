@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -97,7 +99,7 @@ func (t *CommitChapterTool) Schema() map[string]any {
 	)
 }
 
-func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 	var a struct {
 		Chapter             int                        `json:"chapter"`
 		Summary             string                     `json:"summary"`
@@ -126,7 +128,7 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 		// Đường dẫn đánh bóng/viết lại: chương đã hoàn thành nhưng vẫn trong pending_rewrites, cho phép ghi đè và drain hàng đợi
 		progress, _ := t.store.Progress.Load()
 		if progress != nil && slices.Contains(progress.PendingRewrites, a.Chapter) {
-			return t.executeRewriteCommit(a.Chapter, a.Summary, a.Characters, a.KeyEvents,
+			return t.executeRewriteCommit(ctx, a.Chapter, a.Summary, a.Characters, a.KeyEvents,
 				a.HookType, a.DominantStrand, progress)
 		}
 		return t.buildSkipResult(a.Chapter, progress)
@@ -169,6 +171,25 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 	}
 	if content == "" {
 		return nil, fmt.Errorf("no content found for chapter %d: %w", a.Chapter, errs.ErrToolPrecondition)
+	}
+
+	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa
+	if ctx.Value("import_mode") != true {
+		latestCheck := t.store.Checkpoints.LatestByStep(domain.ChapterScope(a.Chapter), "consistency_check")
+		if latestCheck == nil {
+			return nil, fmt.Errorf("chương %d chưa chạy kiểm tra nhất quán, vui lòng gọi check_consistency(chapter=%d) trước khi commit: %w", a.Chapter, a.Chapter, errs.ErrToolPrecondition)
+		}
+		sum := sha256.Sum256([]byte(content))
+		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
+		if latestCheck.Digest != currentDigest {
+			return nil, fmt.Errorf("bản nháp chương %d đã thay đổi sau lần gọi check_consistency gần nhất. Vui lòng gọi check_consistency(chapter=%d) lại để xác nhận tính nhất quán trước khi commit: %w", a.Chapter, a.Chapter, errs.ErrToolPrecondition)
+		}
+	}
+
+	// Kiểm tra và chặn quy tắc cơ học trước khi ghi đĩa
+	violations, err := t.checkAndBlockRules(content, wordCount)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now().Format(time.RFC3339)
@@ -337,9 +358,23 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 		return nil, fmt.Errorf("checkpoint commit: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 11. Kiểm tra quy tắc cơ học (chỉ trả về dữ liệu thực tế, không chặn)
-	violations := t.checkRules(content, wordCount)
+	// 11. Trả về kết quả
 	return json.Marshal(commitOutput{CommitResult: result, RuleViolations: violations})
+}
+
+// checkAndBlockRules kiểm tra cơ học và chặn nếu có lỗi nghiêm trọng (SeverityError).
+func (t *CommitChapterTool) checkAndBlockRules(text string, wordCount int) ([]rules.Violation, error) {
+	violations := t.checkRules(text, wordCount)
+	for _, v := range violations {
+		if v.Severity == rules.SeverityError {
+			limitDesc := ""
+			if v.Limit != nil {
+				limitDesc = fmt.Sprintf(" (giới hạn: %v)", v.Limit)
+			}
+			return nil, fmt.Errorf("commit bị chặn do vi phạm quy tắc %s: thực tế %v%s. Vui lòng chỉnh sửa bản nháp trước khi commit lại: %w", v.Rule, v.Actual, limitDesc, errs.ErrToolPrecondition)
+		}
+	}
+	return violations, nil
 }
 
 // checkRules kiểm tra cơ học nội dung chương: Lint giới hạn tối thiểu tích hợp sẵn (kiểm tra cơ chế tồn dư, luôn thực thi)
@@ -354,6 +389,7 @@ func (t *CommitChapterTool) checkRules(text string, wordCount int) []rules.Viola
 // Bỏ qua toàn bộ thao tác bổ sung trạng thái thế giới (timeline / foreshadow / relationship / state_changes) và kiểm tra biên giới cung,
 // vì những thứ này đã được áp dụng trong lần lưu gốc của chương.
 func (t *CommitChapterTool) executeRewriteCommit(
+	ctx context.Context,
 	chapter int,
 	summary string,
 	characters, keyEvents []string,
@@ -367,6 +403,25 @@ func (t *CommitChapterTool) executeRewriteCommit(
 	}
 	if content == "" {
 		return nil, fmt.Errorf("no content found for chapter %d: %w", chapter, errs.ErrToolPrecondition)
+	}
+
+	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa
+	if ctx.Value("import_mode") != true {
+		latestCheck := t.store.Checkpoints.LatestByStep(domain.ChapterScope(chapter), "consistency_check")
+		if latestCheck == nil {
+			return nil, fmt.Errorf("chương %d chưa chạy kiểm tra nhất quán, vui lòng gọi check_consistency(chapter=%d) trước khi commit: %w", chapter, chapter, errs.ErrToolPrecondition)
+		}
+		sum := sha256.Sum256([]byte(content))
+		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
+		if latestCheck.Digest != currentDigest {
+			return nil, fmt.Errorf("bản nháp chương %d đã thay đổi sau lần gọi check_consistency gần nhất. Vui lòng gọi check_consistency(chapter=%d) lại để xác nhận tính nhất quán trước khi commit: %w", chapter, chapter, errs.ErrToolPrecondition)
+		}
+	}
+
+	// Kiểm tra và chặn quy tắc cơ học trước khi ghi đĩa
+	violations, err := t.checkAndBlockRules(content, wordCount)
+	if err != nil {
+		return nil, err
 	}
 
 	// 2. Kiểm tra cứng: drafts hoàn toàn giống bản chính hiện tại → chưa thực sự đánh bóng/viết lại (writer bỏ qua draft_chapter)
@@ -459,7 +514,6 @@ func (t *CommitChapterTool) executeRewriteCommit(
 	}
 
 	// Giống đường chính: rewrite/polish cũng kiểm tra cơ học và kèm rule_violations
-	violations := t.checkRules(content, wordCount)
 	return json.Marshal(map[string]any{
 		"chapter":         chapter,
 		"rewritten":       true,

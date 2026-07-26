@@ -289,6 +289,14 @@ func TestEditChapterWorksWithCommitValidation(t *testing.T) {
 		t.Fatalf("edit_chapter: %v", err)
 	}
 
+	consistencyTool := NewCheckConsistencyTool(s)
+	consistencyArgs, _ := json.Marshal(map[string]any{
+		"chapter": 2,
+	})
+	if _, err := consistencyTool.Execute(context.Background(), consistencyArgs); err != nil {
+		t.Fatalf("check_consistency: %v", err)
+	}
+
 	commitTool := NewCommitChapterTool(s)
 	commitArgs, _ := json.Marshal(map[string]any{
 		"chapter":    2,

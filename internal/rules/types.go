@@ -132,8 +132,7 @@ func (b Bundle) IsEmpty() bool {
 //	forbidden_chars xuất hiện             -> Error
 //	forbidden_phrases xuất hiện           -> Error
 //	fatigue_words vượt ngưỡng             -> Warning
-//	chapter_words lệch < 20%              -> Warning
-//	chapter_words lệch >= 20%             -> Error
+//	chapter_words lệch bất kỳ mức nào     -> Warning (không bao giờ Error — tránh chặn cứng commit_chapter)
 type Severity string
 
 const (
@@ -141,7 +140,8 @@ const (
 	SeverityError   Severity = "error"
 )
 
-// ChapterWordsDeviationThreshold định nghĩa ngưỡng độ lệch chapter_words để nâng lên error (20%).
+// ChapterWordsDeviationThreshold (20%) không còn dùng để nâng severity lên error (chapter_words luôn Warning);
+// giữ lại làm ngưỡng tham khảo để phân loại "lệch nhẹ" so với "lệch đáng kể" khi hiển thị/chẩn đoán.
 const ChapterWordsDeviationThreshold = 0.20
 
 // Violation là đầu ra của checker: tuyên bố sự thật rằng chương này vi phạm một quy tắc máy móc nào đó.

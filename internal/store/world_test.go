@@ -289,11 +289,11 @@ func TestRenderWorldRules(t *testing.T) {
 	if strings.Index(md, "## magic") >= strings.Index(md, "## society") {
 		t.Error("magic should appear before society")
 	}
-	if !strings.Contains(md, "边界：精神力耗尽会昏迷") {
+	if !strings.Contains(md, "Giới hạn：精神力耗尽会昏迷") {
 		t.Error("missing boundary")
 	}
 	// Không có boundary thì không được render dòng boundary rỗng
-	if strings.Contains(md, "边界：\n") {
+	if strings.Contains(md, "Giới hạn：\n") {
 		t.Error("empty boundary rendered")
 	}
 }

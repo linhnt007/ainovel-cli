@@ -6,12 +6,17 @@
 // Nhìn từng chương riêng lẻ thì mỗi chỗ đều "bình thường", chỉ thống kê toàn tác phẩm mới phơi bày được.
 // Thống kê giao cho code (xác định, không ảo giác), phán xét giao cho LLM (editor căn cứ số liệu
 // để đánh giá từng chiều, writer dựa đó tự tránh).
+//
+// Lưu ý ngôn ngữ: bộ dò tìm bên dưới được hiệu chỉnh cho tiếng Việt (đơn vị "từ" = token tách theo
+// khoảng trắng, không phải rune như tiếng Trung). Tiếng Việt không dán liền âm tiết nên n-gram và
+// ngưỡng độ dài đều tính theo số từ thay vì số ký tự.
 package stylestat
 
 import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // minChapters — ít hơn số chương này thì không xuất thống kê: mẫu quá nhỏ, tần suất không có ý nghĩa.
@@ -63,9 +68,15 @@ type SentenceStat struct {
 
 // EndingStat là phân bố hình thức dòng cuối chương. Kết thúc ngắn tự nó hợp lệ,
 // chỉ khi đồng dạng toàn tác phẩm mới là vấn đề.
+//
+// Lưu ý: JSON key `median_runes` giữ nguyên vì downstream (buildStyleStats, writer.md, editor.md)
+// tham chiếu theo tên trường này; giá trị bên trong nay là số TỪ (whitespace token) của dòng cuối
+// chứ không còn là số rune — tiếng Việt không cô đọng ký tự/nghĩa như tiếng Trung nên đếm rune vô nghĩa.
 type EndingStat struct {
-	ShortRatio  float64 `json:"short_ratio"`
-	MedianRunes int     `json:"median_runes"`
+	ShortRatio float64 `json:"short_ratio"`
+	// MedianWords giữ nguyên JSON key `median_runes` (downstream tham chiếu theo tên này);
+	// tên trường Go đổi sang MedianWords để phản ánh đúng đơn vị tính mới (số từ, không phải rune).
+	MedianWords int `json:"median_runes"`
 }
 
 // TitleStat là số đếm việc dùng lẫn lộn tiền tố "Chương N" trong tiêu đề chương
@@ -75,26 +86,41 @@ type TitleStat struct {
 	WithoutPrefix int `json:"without_prefix"`
 }
 
-// patternDefs là các khuôn câu AI phổ biến. Số đếm là xấp xỉ (regex không phân tích ngữ pháp),
-// mục đích là so sánh theo chiều dọc với đường cơ sở của chính tác phẩm, độ chính xác tuyệt đối không quan trọng.
+// patternDefs là các khuôn câu AI phổ biến của tiếng Việt. Hạt giống lấy từ
+// assets/references/anti-ai-tone.md (mục II, câu đối lập định nghĩa / so sánh sáo) và
+// assets/rules/default.md (fatigue_words: tựa như, như thể, dường như, im lặng, không nói gì,
+// một/vài/mấy nhịp thở). Số đếm là xấp xỉ (regex không phân tích ngữ pháp), mục đích là so sánh
+// theo chiều dọc với đường cơ sở của chính tác phẩm, độ chính xác tuyệt đối không quan trọng.
 var patternDefs = []struct {
 	name string
 	re   *regexp.Regexp
 }{
-	{"Câu chỉnh chuẩn『不是…(而)是…』", regexp.MustCompile(`不是[^。！？\n]{1,24}?[，、]?(?:而)?是`)},
-	{"Lượng từ thời gian『X息/X瞬』", regexp.MustCompile(`[一两二三四五六七八九十几数半][息瞬]`)},
-	{"So sánh trực tiếp『像一/仿佛/如同/宛如』", regexp.MustCompile(`像一|仿佛|如同|宛如`)},
-	{"Nhịp im lặng『沉默了/没有说话/没有回头』", regexp.MustCompile(`沉默了|没有说话|没有回头`)},
+	{"Câu đối lập định nghĩa『không phải…mà là…』", regexp.MustCompile(`(?i)không phải[^.!?\n]{1,40}?mà\s+là`)},
+	{"Lượng từ nhịp thở『một/vài/mấy nhịp thở』", regexp.MustCompile(`(?i)(một|vài|mấy|hai|ba)\s+nhịp\s+thở`)},
+	{"So sánh sáo『tựa như/như thể/dường như』", regexp.MustCompile(`(?i)tựa như|như thể|dường như`)},
+	{"Nhịp im lặng『im lặng/không nói gì/không nói thành lời』", regexp.MustCompile(`(?i)im lặng|không nói gì|không nói thành lời`)},
 }
 
 var (
-	sentenceSplit = regexp.MustCompile(`[。！？\n]+`)
-	openingTimeRe = regexp.MustCompile(`夜|清晨|黎明|天亮|醒来|晨光|一整夜`)
-	titlePrefixRe = regexp.MustCompile(`^#{0,2}\s*第[零〇一二三四五六七八九十百千万\d]+章`)
+	// sentenceSplit tách câu theo dấu kết câu ASCII lẫn dấu toàn góc (giữ dấu cũ để không vỡ
+	// văn bản còn sót ký tự Trung, ví dụ nội dung nhập/di trú từ nguồn cũ).
+	sentenceSplit = regexp.MustCompile(`[.!?。！？\n]+`)
+	// openingTimeRe — từ thời gian mở đầu tiếng Việt thường gặp trong câu sáo "mở chương bằng
+	// đêm/sáng sớm/thức dậy" mà writer.md đã cảnh báo tránh.
+	openingTimeRe = regexp.MustCompile(`(?i)đêm|sáng sớm|bình minh|rạng đông|hoàng hôn|tỉnh dậy|thức dậy|ban mai`)
+	// titlePrefixRe khớp tiền tố "Chương N" theo đúng định dạng thực tế
+	// (assets/references/chapter-template.md: "# Chương [X]: [Tiêu đề chương]").
+	titlePrefixRe = regexp.MustCompile(`(?i)^#{0,2}\s*chương\s*\d+`)
 )
 
-// shortEndingRunes — dòng cuối không vượt quá số ký tự này thì tính là "kết thúc ngắn".
-const shortEndingRunes = 30
+// shortEndingWords — dòng cuối không vượt quá số từ này thì tính là "kết thúc ngắn".
+// Tiếng Việt là ngôn ngữ đơn lập, mỗi âm tiết cách nhau bằng khoảng trắng và được đếm là
+// một "từ" (token); một câu kết ngắn có chủ đích (dừng ở hành động/hình ảnh cụ thể, theo
+// anti-ai-tone.md mục V) thường không quá một câu đơn giản, ví dụ "Anh đứng đó, không nói
+// gì." (~6 từ) hay "Gió tắt, đêm tối bao trùm lấy tất cả." (~8 từ). Chọn 10 làm ngưỡng —
+// nằm giữa khoảng 8-12 từ mà một câu kết ngắn tự nhiên thường đạt tới, đủ chặt để không
+// khớp nhầm một đoạn văn dài bị ngắt dòng.
+const shortEndingWords = 10
 
 // Compute tính thống kê phong cách toàn tác phẩm; trả về nil nếu số chương chưa đủ.
 func Compute(in Input) *Stats {
@@ -131,33 +157,33 @@ func recentWindow(chapters []string) []string {
 	return chapters[len(chapters)-phraseWindow:]
 }
 
-// minePhrases khai thác các cụm từ 3–6 ký tự xuất hiện nhiều trong cửa sổ.
-// Lọc: có dấu câu/khoảng trắng, hư từ/đại từ ở đầu/cuối, trùng danh từ riêng;
+// minePhrases khai thác các cụm 2–4 TỪ (tách theo khoảng trắng) xuất hiện nhiều trong cửa sổ.
+// Lọc: gram chứa số/dấu câu, hư từ/đại từ ở đầu/cuối, trùng danh từ riêng;
 // loại trùng: cụm nào là chuỗi con của cụm đã chọn thì bỏ.
 func minePhrases(chapters []string, stopwords []string) []PhraseStat {
 	text := strings.Join(chapters, "\n")
-	runes := []rune(text)
+	words := strings.Fields(text)
 	threshold := max(8, len(chapters)/2)
 
 	counts := make(map[string]int)
-	for size := 3; size <= 6; size++ {
-		for i := 0; i+size <= len(runes); i++ {
-			gram := runes[i : i+size]
+	for size := 2; size <= 4; size++ {
+		for i := 0; i+size <= len(words); i++ {
+			gram := words[i : i+size]
 			if !validGram(gram) {
 				continue
 			}
-			counts[string(gram)]++
+			counts[strings.Join(gram, " ")]++
 		}
 	}
 
-	stopGrams := stopwordBigrams(stopwords)
+	stopWords := stopwordWords(stopwords)
 	type cand struct {
 		text  string
 		count int
 	}
 	var cands []cand
 	for g, c := range counts {
-		if c < threshold || hitStopword(g, stopGrams) {
+		if c < threshold || hitStopword(g, stopWords) {
 			continue
 		}
 		cands = append(cands, cand{g, c})
@@ -192,42 +218,61 @@ func minePhrases(chapters []string, stopwords []string) []PhraseStat {
 	return out
 }
 
-// gramEdgeStop — n-gram có hư từ/đại từ ở đầu hoặc cuối không phải cụm từ phong cách, bỏ qua.
-const gramEdgeStop = "的了着是在和与就也都还又把被他她它我你这那"
+// wordEdgeStop — gram có hư từ/đại từ/liên từ ở đầu hoặc cuối không phải cụm từ phong cách, bỏ qua.
+// Danh sách gồm hệ từ, phó từ chỉ thời/mức độ, giới từ, liên từ và đại từ nhân xưng/chỉ định phổ
+// biến nhất trong tiếng Việt — vai trò tương đương gramEdgeStop của bản gốc tiếng Trung.
+var wordEdgeStop = map[string]bool{
+	"là": true, "và": true, "với": true, "cùng": true, "nhưng": true, "mà": true,
+	"thì": true, "nên": true, "để": true, "của": true, "cho": true, "ở": true,
+	"trong": true, "ra": true, "lên": true, "xuống": true, "cũng": true, "đều": true,
+	"còn": true, "lại": true, "chỉ": true, "mới": true, "đã": true, "đang": true,
+	"sẽ": true, "rồi": true, "bị": true, "được": true, "không": true, "chưa": true,
+	"phải": true, "ai": true, "gì": true, "sao": true, "nào": true, "đâu": true,
+	"này": true, "đó": true, "ấy": true, "kia": true, "anh": true, "chị": true,
+	"em": true, "tôi": true, "ta": true, "nó": true, "họ": true, "mình": true,
+	"chúng": true, "một": true, "các": true, "những": true, "khi": true, "nếu": true,
+	"vì": true, "hay": true, "hoặc": true, "như": true,
+}
 
-func validGram(gram []rune) bool {
-	for _, r := range gram {
-		if r < 0x4E00 || r > 0x9FFF { // chỉ chấp nhận đoạn thuần Hán tự
-			return false
+// validGram báo cụm từ có hợp lệ để khai thác không: không chứa số/dấu câu/ký hiệu,
+// và không có hư từ/đại từ ở hai đầu.
+func validGram(gram []string) bool {
+	for _, w := range gram {
+		for _, r := range w {
+			if unicode.IsDigit(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
+				return false
+			}
 		}
 	}
-	if strings.ContainsRune(gramEdgeStop, gram[0]) || strings.ContainsRune(gramEdgeStop, gram[len(gram)-1]) {
+	first := strings.ToLower(gram[0])
+	last := strings.ToLower(gram[len(gram)-1])
+	if wordEdgeStop[first] || wordEdgeStop[last] {
 		return false
 	}
 	return true
 }
 
-// stopwordBigrams tách danh từ riêng thành các mảnh 2 ký tự: tên người thường xuất hiện
-// một phần trong văn ("Cửu Uyên chắp tay" chứa "Cửu Uyên"), khớp theo tên đầy đủ sẽ bỏ sót.
+// stopwordWords tách danh từ riêng (tên nhân vật) thành các từ đơn: tên người tiếng Việt
+// là cụm nhiều âm tiết cách nhau bằng khoảng trắng ("Cửu Uyên" → "cửu", "uyên"), mỗi âm tiết
+// đã tự nhiên là một token nên không cần cắt bigram nhân tạo như bản gốc tiếng Trung.
 // Thà lọc nghiêm hơn — bớt một cụm từ thực tế không sao, còn tên người lọt vào danh sách
 // cửa miệng mới là nhiễu.
-func stopwordBigrams(stopwords []string) []string {
-	var grams []string
+func stopwordWords(stopwords []string) map[string]bool {
+	set := make(map[string]bool)
 	for _, w := range stopwords {
-		runes := []rune(strings.TrimSpace(w))
-		if len(runes) < 2 {
-			continue
-		}
-		for i := 0; i+2 <= len(runes); i++ {
-			grams = append(grams, string(runes[i:i+2]))
+		for _, part := range strings.Fields(w) {
+			set[strings.ToLower(part)] = true
 		}
 	}
-	return grams
+	return set
 }
 
-func hitStopword(gram string, stopGrams []string) bool {
-	for _, g := range stopGrams {
-		if strings.Contains(gram, g) {
+func hitStopword(gram string, stopWords map[string]bool) bool {
+	if len(stopWords) == 0 {
+		return false
+	}
+	for _, w := range strings.Fields(gram) {
+		if stopWords[strings.ToLower(w)] {
 			return true
 		}
 	}
@@ -285,9 +330,9 @@ func endingShape(chapters []string) EndingStat {
 		if line == "" {
 			continue
 		}
-		n := len([]rune(line))
+		n := len(strings.Fields(line))
 		lengths = append(lengths, n)
-		if n <= shortEndingRunes {
+		if n <= shortEndingWords {
 			short++
 		}
 	}
@@ -297,7 +342,7 @@ func endingShape(chapters []string) EndingStat {
 	sort.Ints(lengths)
 	return EndingStat{
 		ShortRatio:  round2(float64(short) / float64(len(lengths))),
-		MedianRunes: lengths[len(lengths)/2],
+		MedianWords: lengths[len(lengths)/2],
 	}
 }
 

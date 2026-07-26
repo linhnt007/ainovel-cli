@@ -29,9 +29,7 @@ func TestCommitChapterRejectsNonPendingRewrite(t *testing.T) {
 	if err := store.Progress.SetFlow(domain.FlowRewriting); err != nil {
 		t.Fatalf("SetFlow: %v", err)
 	}
-	if err := store.Drafts.SaveDraft(3, "Đây là nội dung chương sai."); err != nil {
-		t.Fatalf("SaveDraft: %v", err)
-	}
+	saveDraftAndCheck(t, store, 3, "Đây là nội dung chương sai.")
 
 	tool := NewCommitChapterTool(store)
 	args, err := json.Marshal(map[string]any{
@@ -83,9 +81,7 @@ func TestCommitChapterAllowsPendingRewrite(t *testing.T) {
 	if err := store.Progress.SetFlow(domain.FlowRewriting); err != nil {
 		t.Fatalf("SetFlow: %v", err)
 	}
-	if err := store.Drafts.SaveDraft(2, "Đây là nội dung chương đúng đang chờ viết lại."); err != nil {
-		t.Fatalf("SaveDraft: %v", err)
-	}
+	saveDraftAndCheck(t, store, 2, "Đây là nội dung chương đúng đang chờ viết lại.")
 
 	tool := NewCommitChapterTool(store)
 	args, err := json.Marshal(map[string]any{
@@ -141,9 +137,7 @@ func TestCommitChapterUpdatesCastLedger(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Save core characters: %v", err)
 	}
-	if err := s.Drafts.SaveDraft(1, "Nội dung chương một, Lâm Mặc gặp chủ quán trọ Lão Chu và tiểu đồng A Vân."); err != nil {
-		t.Fatalf("SaveDraft: %v", err)
-	}
+	saveDraftAndCheck(t, s, 1, "Nội dung chương một, Lâm Mặc gặp chủ quán trọ Lão Chu và tiểu đồng A Vân.")
 
 	tool := NewCommitChapterTool(s)
 	args, _ := json.Marshal(map[string]any{
@@ -202,9 +196,7 @@ func TestCommitChapterNonLayeredRecompletesAfterRework(t *testing.T) {
 
 	// Hai chương hoàn thành và kết thúc. Chương 2 có sẵn drafts/chapters để phục vụ sửa lại.
 	ch2 := "Nội dung gốc chương hai, dùng để mô phỏng bản nháp đã lưu chương."
-	if err := s.Drafts.SaveDraft(2, ch2); err != nil {
-		t.Fatalf("SaveDraft: %v", err)
-	}
+	saveDraftAndCheck(t, s, 2, ch2)
 	if err := s.Drafts.SaveFinalChapter(2, ch2); err != nil {
 		t.Fatalf("SaveFinalChapter: %v", err)
 	}
@@ -224,9 +216,7 @@ func TestCommitChapterNonLayeredRecompletesAfterRework(t *testing.T) {
 	}
 
 	// Lưu chương sau khi sửa lại (bản nháp phải khác bản cuối mới được chấp nhận)
-	if err := s.Drafts.SaveDraft(2, ch2+"\n\nĐoạn mới thêm sau khi sửa lại."); err != nil {
-		t.Fatalf("SaveDraft (reworked): %v", err)
-	}
+	saveDraftAndCheck(t, s, 2, ch2+"\n\nĐoạn mới thêm sau khi sửa lại.")
 	tool := NewCommitChapterTool(s)
 	args, _ := json.Marshal(map[string]any{
 		"chapter":    2,
@@ -294,9 +284,7 @@ func TestCommitChapterLayeredReopenRecompletesDespiteOpenThread(t *testing.T) {
 	// Hai chương hoàn thành lưu đĩa và hoàn kết
 	ch2 := "Nội dung gốc chương hai, mô phỏng bản nháp đã lưu chương."
 	for ch, body := range map[int]string{1: "Nội dung chương một.", 2: ch2} {
-		if err := s.Drafts.SaveDraft(ch, body); err != nil {
-			t.Fatalf("SaveDraft %d: %v", ch, err)
-		}
+		saveDraftAndCheck(t, s, ch, body)
 		if err := s.Drafts.SaveFinalChapter(ch, body); err != nil {
 			t.Fatalf("SaveFinalChapter %d: %v", ch, err)
 		}
@@ -317,9 +305,7 @@ func TestCommitChapterLayeredReopenRecompletesDespiteOpenThread(t *testing.T) {
 	if err := s.Progress.Reopen([]int{2}, "sửa lại"); err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
-	if err := s.Drafts.SaveDraft(2, ch2+"\n\nĐoạn mới thêm sau khi sửa lại."); err != nil {
-		t.Fatalf("SaveDraft reworked: %v", err)
-	}
+	saveDraftAndCheck(t, s, 2, ch2+"\n\nĐoạn mới thêm sau khi sửa lại.")
 	tool := NewCommitChapterTool(s)
 	args, _ := json.Marshal(map[string]any{
 		"chapter": 2, "summary": "tóm tắt sau khi sửa lại", "characters": []string{"nhân vật chính"}, "key_events": []string{"dọn dẹp"},
@@ -356,9 +342,7 @@ func TestCommitChapterRejectsPolishWithoutDraftChange(t *testing.T) {
 
 	// Mô phỏng chương 2 đã hoàn thành bình thường: nội dung drafts và chapters giống nhau.
 	original := "Nội dung gốc chương hai, dùng để mô phỏng bản nháp đã lưu chương."
-	if err := s.Drafts.SaveDraft(2, original); err != nil {
-		t.Fatalf("SaveDraft: %v", err)
-	}
+	saveDraftAndCheck(t, s, 2, original)
 	if err := s.Drafts.SaveFinalChapter(2, original); err != nil {
 		t.Fatalf("SaveFinalChapter: %v", err)
 	}
@@ -388,9 +372,7 @@ func TestCommitChapterRejectsPolishWithoutDraftChange(t *testing.T) {
 
 	// Viết một bản nháp khác → phải được chấp nhận
 	polished := original + "\n\nĐoạn mới thêm sau khi chỉnh sửa."
-	if err := s.Drafts.SaveDraft(2, polished); err != nil {
-		t.Fatalf("SaveDraft (polished): %v", err)
-	}
+	saveDraftAndCheck(t, s, 2, polished)
 	if _, err := tool.Execute(context.Background(), args); err != nil {
 		t.Fatalf("Execute after real polish: %v", err)
 	}
@@ -430,9 +412,7 @@ func TestCommitChapterLayeredRejectsOutOfRangeChapter(t *testing.T) {
 	_ = s.Progress.UpdatePhase(domain.PhaseWriting)
 
 	// commit chương 2 vượt phạm vi phải thất bại cứng
-	if err := s.Drafts.SaveDraft(2, "Nội dung chương vượt phạm vi, phải bị chặn."); err != nil {
-		t.Fatalf("SaveDraft: %v", err)
-	}
+	saveDraftAndCheck(t, s, 2, "Nội dung chương vượt phạm vi, phải bị chặn.")
 	tool := NewCommitChapterTool(s)
 	args, _ := json.Marshal(map[string]any{
 		"chapter":    2,
@@ -498,9 +478,7 @@ func TestCommitChapterLayeredAutoCompletesWhenDone(t *testing.T) {
 
 	tool := NewCommitChapterTool(s)
 	commit := func(ch int) map[string]any {
-		if err := s.Drafts.SaveDraft(ch, fmt.Sprintf("Nội dung chương %d, dùng để kiểm tra hoàn kết tất định.", ch)); err != nil {
-			t.Fatalf("SaveDraft %d: %v", ch, err)
-		}
+		saveDraftAndCheck(t, s, ch, fmt.Sprintf("Nội dung chương %d, dùng để kiểm tra hoàn kết tất định.", ch))
 		args, _ := json.Marshal(map[string]any{
 			"chapter": ch, "summary": "tóm tắt", "characters": []string{"nhân vật chính"}, "key_events": []string{"sự kiện"},
 		})
@@ -565,9 +543,7 @@ func TestCommitChapterLayeredNoAutoCompleteWithOpenThreads(t *testing.T) {
 	}
 	_ = s.Progress.UpdatePhase(domain.PhaseWriting)
 
-	if err := s.Drafts.SaveDraft(1, "Nội dung chương duy nhất, nhưng luồng dài chưa khép."); err != nil {
-		t.Fatalf("SaveDraft: %v", err)
-	}
+	saveDraftAndCheck(t, s, 1, "Nội dung chương duy nhất, nhưng luồng dài chưa khép.")
 	tool := NewCommitChapterTool(s)
 	args, _ := json.Marshal(map[string]any{
 		"chapter": 1, "summary": "tóm tắt", "characters": []string{"nhân vật chính"}, "key_events": []string{"sự kiện"},
@@ -577,5 +553,16 @@ func TestCommitChapterLayeredNoAutoCompleteWithOpenThreads(t *testing.T) {
 	}
 	if p, _ := s.Progress.Load(); p.Phase == domain.PhaseComplete {
 		t.Fatal("không nên tự động hoàn kết khi vẫn còn luồng dài hoạt động chưa khép")
+	}
+}
+
+func saveDraftAndCheck(t *testing.T, s *store.Store, ch int, content string) {
+	t.Helper()
+	if err := s.Drafts.SaveDraft(ch, content); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+	_ = s.Drafts.SaveChapterPlan(domain.ChapterPlan{Chapter: ch, Title: "test", Goal: "test"})
+	if _, err := s.Checkpoints.AppendArtifact(domain.ChapterScope(ch), "consistency_check", fmt.Sprintf("drafts/%02d.draft.md", ch)); err != nil {
+		t.Fatalf("AppendArtifact consistency_check: %v", err)
 	}
 }

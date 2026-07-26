@@ -70,6 +70,13 @@ func (t *DraftChapterTool) Execute(_ context.Context, args json.RawMessage) (jso
 	if err := t.store.Progress.ValidateChapterWork(a.Chapter); err != nil {
 		return nil, err
 	}
+	plan, err := t.store.Drafts.LoadChapterPlan(a.Chapter)
+	if err != nil {
+		return nil, fmt.Errorf("load chapter plan: %w: %w", errs.ErrStoreRead, err)
+	}
+	if plan == nil || plan.Title == "" || plan.Goal == "" {
+		return nil, fmt.Errorf("chương %d chưa được lập kế hoạch, vui lòng gọi plan_chapter(chapter=%d) trước khi viết nháp: %w", a.Chapter, a.Chapter, errs.ErrToolPrecondition)
+	}
 	if t.store.Progress.IsChapterCompleted(a.Chapter) {
 		// Luồng chỉnh sửa/viết lại: chương đã hoàn thành nhưng vẫn còn trong pending_rewrites, cho phép ghi đè bản nháp
 		progress, _ := t.store.Progress.Load()

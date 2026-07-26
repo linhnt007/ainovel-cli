@@ -11,7 +11,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
-// SaveReviewTool lưu kết quả审阅 của Biên tập viên.
+// SaveReviewTool lưu kết quả rà soát của Biên tập viên.
 type SaveReviewTool struct {
 	store *store.Store
 }
@@ -22,11 +22,11 @@ func NewSaveReviewTool(store *store.Store) *SaveReviewTool {
 
 func (t *SaveReviewTool) Name() string { return "save_review" }
 func (t *SaveReviewTool) Description() string {
-	return "Lưu kết quả审阅 và cập nhật trạng thái luồng. verdict là một trong accept/polish/rewrite. " +
+	return "Lưu kết quả rà soát và cập nhật trạng thái luồng. verdict là một trong accept/polish/rewrite. " +
 		"Công cụ thực hiện cổng kiểm tra thẻ điểm nội bộ (có thể nâng cấp verdict), trực tiếp cập nhật flow và pending_rewrites của Progress. " +
 		"Trả về dữ liệu thực tế có cấu trúc: final_verdict / affected_chapters / escalation_reason / next_flow / next_chapter"
 }
-func (t *SaveReviewTool) Label() string { return "Lưu审阅" }
+func (t *SaveReviewTool) Label() string { return "Lưu rà soát" }
 
 // Công cụ ghi (đồng thời cập nhật reviews/ và PendingRewrites/Flow của Progress), cấm chạy đồng thời.
 func (t *SaveReviewTool) ReadOnly(_ json.RawMessage) bool        { return false }
@@ -47,15 +47,15 @@ func (t *SaveReviewTool) Schema() map[string]any {
 		schema.Property("comment", schema.String("Kết luận ngắn gọn cho chiều này; mỗi chiều bắt buộc điền, aesthetic phải trích dẫn nguyên văn hoặc số liệu thống kê cụ thể")).Required(),
 	)
 	return schema.Object(
-		schema.Property("chapter", schema.Int("Số chương được審阅 (審阅toàn cục thì điền số chương mới nhất)")).Required(),
-		schema.Property("scope", schema.Enum("Phạm vi審阅", "chapter", "global", "arc")).Required(),
+		schema.Property("chapter", schema.Int("Số chương được rà soát (rà soát toàn cục thì điền số chương mới nhất)")).Required(),
+		schema.Property("scope", schema.Enum("Phạm vi rà soát", "chapter", "global", "arc")).Required(),
 		schema.Property("dimensions", schema.Array("Điểm theo từng chiều (mỗi chiều một mục, bảy chiều)", dimensionSchema)).Required(),
 		schema.Property("issues", schema.Array("Các vấn đề phát hiện được", issueSchema)).Required(),
 		schema.Property("contract_status", schema.Enum("Mức độ hoàn thành hợp đồng chương", "met", "partial", "missed")),
 		schema.Property("contract_misses", schema.Array("Các mục hợp đồng chưa hoàn thành hoặc vi phạm", schema.String(""))),
 		schema.Property("contract_notes", schema.String("Ghi chú ngắn về tình trạng thực hiện hợp đồng")),
-		schema.Property("verdict", schema.Enum("Kết luận審阅", "accept", "polish", "rewrite")).Required(),
-		schema.Property("summary", schema.String("Tóm tắt審阅")).Required(),
+		schema.Property("verdict", schema.Enum("Kết luận rà soát", "accept", "polish", "rewrite")).Required(),
+		schema.Property("summary", schema.String("Tóm tắt rà soát")).Required(),
 		schema.Property("affected_chapters", schema.Array("Danh sách số chương cần viết lại hoặc trau chuốt (bắt buộc khi verdict là polish/rewrite)", schema.Int(""))),
 	)
 }
@@ -119,7 +119,7 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	}
 
 	// Cập nhật Progress theo final verdict.
-	// Nếu ghi thất bại phải trả về sớm — sau đó sẽ append checkpoint审阅, nếu nuốt err ở đây
+	// Nếu ghi thất bại phải trả về sớm — sau đó sẽ append checkpoint rà soát, nếu nuốt err ở đây
 	// Điều phối viên sẽ thấy saved:true nhưng Store vẫn ở trạng thái trung gian với Flow cũ / thiếu PendingRewrites.
 	progress, _ := t.store.Progress.Load()
 	if finalVerdict == "rewrite" || finalVerdict == "polish" {
