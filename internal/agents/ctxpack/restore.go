@@ -2,6 +2,7 @@ package ctxpack
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/voocel/agentcore"
@@ -178,17 +179,150 @@ func (p *WriterRestorePack) buildMessage(budgetTokens int) (agentcore.Message, b
 	return agentcore.UserMsg(p.text), true
 }
 
-// truncateJSONToTokens keeps the first portion of JSON bytes that fits within
-// the token budget. Simple byte-level truncation — the result may not be valid
-// JSON, but it preserves the most important leading content (keys, early fields).
+// truncateJSONToTokens trả về một phiên bản của JSON b sao cho lọt ngân sách
+// budgetTokens, và LUÔN đảm bảo kết quả là JSON hợp lệ.
+//
+// Vì sao cần viết lại: bản cũ cắt theo byte thô — JSON bị cắt giữa chừng là
+// hỏng cú pháp, model nhận context rác sau compaction mà không ai phát hiện
+// ra (bug im lặng). Cách sửa: parse JSON, rồi lặp loại bỏ phần tử theo thứ tự
+// ưu tiên (mảng cắt từ phần tử cuối, key "nặng" nhất — ít quan trọng theo
+// dung lượng — bị bỏ trước) cho tới khi bản marshal lại lọt ngân sách token.
 func truncateJSONToTokens(b []byte, budgetTokens int) string {
-	// Rough: 1 token ≈ 4 bytes for ASCII-dominant JSON
-	maxBytes := budgetTokens * 4
-	if maxBytes >= len(b) {
-		return string(b)
+	full := string(b)
+	if budgetTokens <= 0 {
+		budgetTokens = 1
 	}
-	if maxBytes < 20 {
-		maxBytes = 20
+	if estimateTextTokens(full) <= budgetTokens {
+		return full
 	}
-	return string(b[:maxBytes])
+
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		// Input không phải JSON hợp lệ ngay từ đầu (phòng thủ): fallback cắt
+		// theo ranh giới rune + "…", không cắt giữa ký tự UTF-8 đa byte.
+		return truncateRunesToBudget(full, budgetTokens)
+	}
+
+	for {
+		out, err := json.Marshal(v)
+		if err != nil {
+			// Không thể xảy ra vì v luôn đến từ Unmarshal thành công, nhưng
+			// phòng thủ tối đa: fallback rune-safe trên chuỗi gốc.
+			return truncateRunesToBudget(full, budgetTokens)
+		}
+		if estimateTextTokens(string(out)) <= budgetTokens {
+			return string(out)
+		}
+		next, changed := dropLargestJSONElement(v)
+		if !changed {
+			// Không còn gì để cắt (đã rỗng) — trả bản nhỏ nhất có thể, vẫn
+			// đảm bảo là JSON hợp lệ dù có thể vẫn vượt ngân sách.
+			return string(out)
+		}
+		v = next
+	}
+}
+
+// estimateTextTokens ước lượng số token của một đoạn text bằng đúng hàm ước
+// lượng token sẵn có trong package (corecontext.EstimateTokens, đã dùng ở
+// buildMessage phía trên) — không tự chế công thức mới.
+func estimateTextTokens(s string) int {
+	return corecontext.EstimateTokens(agentcore.UserMsg(s))
+}
+
+// dropLargestJSONElement loại bỏ một phần tử khỏi cây JSON theo thứ tự ưu
+// tiên: đi sâu vào nhánh con lớn nhất (theo kích thước marshal) để cắt tỉa từ
+// bên trong trước khi xóa hẳn cả khóa/phần tử — mảng luôn cắt từ phần tử
+// cuối, map luôn ưu tiên xóa key có giá trị lớn nhất (bằng nhau thì xóa key
+// đứng sau theo alphabet trước, tức "ngược alphabet").
+// Trả về (giá trị mới, true) nếu đã cắt được, hoặc (v, false) nếu v là leaf
+// hoặc container rỗng (không còn gì để cắt).
+func dropLargestJSONElement(v any) (any, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		if len(t) == 0 {
+			return t, false
+		}
+		key := largestMapKey(t)
+		child, changed := dropLargestJSONElement(t[key])
+		if changed {
+			t[key] = child
+			return t, true
+		}
+		delete(t, key)
+		return t, true
+	case []any:
+		if len(t) == 0 {
+			return t, false
+		}
+		last := len(t) - 1
+		child, changed := dropLargestJSONElement(t[last])
+		if changed {
+			t[last] = child
+			return t, true
+		}
+		return t[:last], true
+	default:
+		// Leaf (string/number/bool/nil): không thể cắt nhỏ hơn nữa.
+		return v, false
+	}
+}
+
+// largestMapKey chọn key có giá trị marshal lớn nhất để drop trước (ít quan
+// trọng nhất theo dung lượng — giả định thông tin quan trọng thường ngắn gọn
+// hơn dữ liệu phụ/dài dòng). Khi bằng kích thước, chọn key đứng sau theo thứ
+// tự alphabet để kết quả xác định (deterministic), tức ưu tiên "ngược
+// alphabet" như brief yêu cầu khi không có tín hiệu ưu tiên nào khác.
+func largestMapKey(m map[string]any) string {
+	var best string
+	bestSize := -1
+	first := true
+	for k, val := range m {
+		size := jsonSizeOf(val)
+		if first || size > bestSize || (size == bestSize && k > best) {
+			best = k
+			bestSize = size
+			first = false
+		}
+	}
+	return best
+}
+
+// jsonSizeOf trả về kích thước (byte) sau khi marshal — dùng để so sánh độ
+// "nặng" giữa các phần tử khi chọn thứ tự drop. Lỗi marshal (hiếm khi xảy ra
+// với giá trị đến từ Unmarshal) được coi là kích thước 0 (ưu tiên drop cuối).
+func jsonSizeOf(v any) int {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+// truncateRunesToBudget cắt chuỗi theo ranh giới rune (không cắt giữa ký tự
+// UTF-8 đa byte) rồi thêm "…" — dùng khi input không phải JSON hợp lệ, hoặc
+// làm lưới an toàn cuối cùng nếu marshal lại JSON bất ngờ lỗi.
+func truncateRunesToBudget(s string, budgetTokens int) string {
+	runes := []rune(s)
+	if len(runes) == 0 {
+		return s
+	}
+	// Khởi điểm heuristic giống ước lượng byte cũ (~4 byte/token) để tránh dò
+	// từ cuối chuỗi cho input dài, sau đó giảm dần tới khi ước lượng token
+	// thực sự (bằng estimateTextTokens) lọt ngân sách.
+	n := budgetTokens * 4
+	if n > len(runes) {
+		n = len(runes)
+	}
+	if n < 1 {
+		n = 1
+	}
+	for n > 0 {
+		candidate := string(runes[:n]) + "…"
+		if estimateTextTokens(candidate) <= budgetTokens {
+			return candidate
+		}
+		n--
+	}
+	return "…"
 }
