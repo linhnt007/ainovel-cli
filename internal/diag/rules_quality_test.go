@@ -32,9 +32,9 @@ func TestHookWeakChain(t *testing.T) {
 func TestPayoffMissPattern(t *testing.T) {
 	snap := &Snapshot{
 		Plans: map[int]*domain.ChapterPlan{
-			1: {Chapter: 1, Contract: domain.ChapterContract{PayoffPoints: []string{"首战取胜"}}},
-			2: {Chapter: 2, Contract: domain.ChapterContract{PayoffPoints: []string{"确认搭档关系"}}},
-			3: {Chapter: 3, Contract: domain.ChapterContract{PayoffPoints: []string{"揭开真相一角"}}},
+			1: {Chapter: 1, Contract: domain.ChapterContract{PayoffPoints: []string{"thắng trận đầu"}}},
+			2: {Chapter: 2, Contract: domain.ChapterContract{PayoffPoints: []string{"xác nhận quan hệ đồng đội"}}},
+			3: {Chapter: 3, Contract: domain.ChapterContract{PayoffPoints: []string{"hé lộ một góc sự thật"}}},
 		},
 		Reviews: map[int]*domain.ReviewEntry{
 			1: {Chapter: 1, Scope: "chapter", ContractStatus: "partial"},

@@ -18,23 +18,43 @@ genre: xianxia
 chapter_words: 3000-6000
 
 # Danh sách đen ký tự/ký hiệu. Xuất hiện ≥ 1 lần là error.
-# Lưu ý: dấu gạch ngang kép tiếng Trung là hai ký tự em-dash; viết "——" để khớp cặp đôi, "—" để khớp đơn.
-forbidden_chars:
-  - "——"
+# Mặc định KHÔNG cấm gì: dấu gạch ngang dài "——" hợp lệ khi đối thoại bị ngắt giữa chừng,
+# còn tranh cãi nên không đưa vào mặc định tích hợp (xem assets/rules/default.md:26-27).
+# Bỏ comment hai dòng dưới đây nếu muốn cấm gạch ngang dài trong chương của bạn:
+# forbidden_chars:
+#   - "——"
 
 # Danh sách đen cụm từ cấm. Xuất hiện ≥ 1 lần là error. Checker so khớp chuỗi con theo nghĩa đen, không có ký tự đại diện:
 # chỉ điền "chuỗi cố định có độ dài xác định"; các mẫu có biến (ví dụ "không phải X mà là Y") không thể bắt bằng khớp chuỗi đen,
 # nên viết vào phần markdown bên dưới để biên tập viên phán đoán theo ngữ nghĩa.
 forbidden_phrases:
-  - "某种程度上"
-  - "值得注意的是"
+  - "theo một nghĩa nào đó"
+  - "đáng chú ý là"
+  - "không hiểu tại sao"
+  - "cảm xúc lẫn lộn"
 
 # Ngưỡng từ sáo rỗng: chỉ báo warning khi vượt quá N lần trong chương (không cộng dồn qua các chương).
-# Cũng hỗ trợ dạng danh sách: - 不禁  - 竟然  ← ngưỡng mặc định là 1
+# Cũng hỗ trợ dạng danh sách: - từ nào đó  ← ngưỡng mặc định là 1
+# Sáu mục cuối (như thể/im lặng/không nói gì/X nhịp thở) là kết quả thực nghiệm từ vòng lặp dài 196 chương:
+# mô hình chuyển sang dùng các "từ nhịp truyện" này với tần suất trung bình 5-7 lần mỗi chương,
+# nên ngưỡng được nới lỏng để cho phép sử dụng bình thường thay vì báo warning liên tục.
 fatigue_words:
-  不禁: 1
-  竟然: 1
-  仿佛: 2
+  không khỏi: 1
+  bỗng nhiên: 1
+  dường như: 2
+  ngoài ra: 1
+  tuy nhiên: 2
+  một chút: 2
+  một vệt: 2
+  một sợi: 2
+  tựa như: 1
+  không thể không: 1
+  như thể: 3
+  im lặng: 2
+  không nói gì: 2
+  vài nhịp thở: 3
+  một nhịp thở: 3
+  mấy nhịp thở: 2
 ---
 
 # Phong cách
