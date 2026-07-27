@@ -44,7 +44,8 @@ func TestSetFlowRejectsInvalidTransition(t *testing.T) {
 	if err := store.Progress.SetFlow(domain.FlowRewriting); err != nil {
 		t.Fatalf("SetFlow rewriting: %v", err)
 	}
-	if err := store.Progress.SetFlow(domain.FlowReviewing); err == nil {
+	// rewriting -> polishing là bước nhảy không hợp lệ (rewriting chỉ được về writing/steering).
+	if err := store.Progress.SetFlow(domain.FlowPolishing); err == nil {
 		t.Fatal("expected invalid flow transition to be rejected")
 	}
 }

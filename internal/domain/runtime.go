@@ -18,7 +18,6 @@ type FlowState string
 
 const (
 	FlowWriting   FlowState = "writing"
-	FlowReviewing FlowState = "reviewing"
 	FlowRewriting FlowState = "rewriting"
 	FlowPolishing FlowState = "polishing"
 	FlowSteering  FlowState = "steering"
@@ -171,7 +170,7 @@ func NewChapterMemoryPolicy(progress *Progress, profile ContextProfile, currentO
 		if progress.TotalChapters > 30 {
 			policy.RelatedLookup = true
 		}
-		if progress.Flow == FlowReviewing || progress.Flow == FlowRewriting || progress.Flow == FlowPolishing {
+		if progress.Flow == FlowRewriting || progress.Flow == FlowPolishing {
 			policy.HandoffPreferred = true
 		}
 		if progress.Layered && len(progress.CompletedChapters) >= 6 {

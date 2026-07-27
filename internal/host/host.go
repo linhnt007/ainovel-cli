@@ -755,8 +755,6 @@ func deriveStatusLabel(s UISnapshot) string {
 	switch {
 	case s.Phase == string(domain.PhaseComplete):
 		return "COMPLETE"
-	case s.Flow == string(domain.FlowReviewing):
-		return "REVIEW"
 	case s.Flow == string(domain.FlowRewriting) || s.Flow == string(domain.FlowPolishing):
 		return "REWRITE"
 	case s.RuntimeState == "running":

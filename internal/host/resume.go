@@ -72,9 +72,6 @@ func describeResume(store *storepkg.Store, progress *domain.Progress) string {
 			}
 			return fmt.Sprintf("%s khôi phục: %d chương chờ xử lý", verb, len(progress.PendingRewrites))
 		}
-		if progress.Flow == domain.FlowReviewing {
-			return "Khôi phục: đánh giá bị gián đoạn"
-		}
 		if progress.InProgressChapter > 0 {
 			return fmt.Sprintf("Khôi phục: chương %d đang tiến hành", progress.InProgressChapter)
 		}

@@ -64,13 +64,6 @@ func TestRoute_PendingPolishingVerb(t *testing.T) {
 	}
 }
 
-func TestRoute_ReviewingDelegatesToLLM(t *testing.T) {
-	p := writingProgress([]int{1, 2}, domain.FlowReviewing)
-	if got := Route(State{Progress: p}); got != nil {
-		t.Fatalf("expected nil during reviewing, got %+v", got)
-	}
-}
-
 func TestRoute_SteeringDelegatesToLLM(t *testing.T) {
 	p := writingProgress([]int{1}, domain.FlowSteering)
 	if got := Route(State{Progress: p}); got != nil {
@@ -195,6 +188,58 @@ func TestRoute_NormalContinue(t *testing.T) {
 	}
 	if got.Chapter != 4 {
 		t.Errorf("expected Chapter=4, got %d", got.Chapter)
+	}
+}
+
+// flatProgress tạo Progress chế độ flat (không phân tầng) đang ở giai đoạn Writing.
+func flatProgress(completed []int) *domain.Progress {
+	return &domain.Progress{
+		Phase:             domain.PhaseWriting,
+		Flow:              domain.FlowWriting,
+		Layered:           false,
+		CompletedChapters: completed,
+		TotalChapters:     50,
+	}
+}
+
+func TestRoute_FlatPendingReviewDispatchesEditor(t *testing.T) {
+	// Đã hoàn thành 5 chương (bội của ReviewInterval) nhưng batch chưa được review → ép editor.
+	s := State{
+		Progress:             flatProgress([]int{1, 2, 3, 4, 5}),
+		LastCompleted:        5,
+		HasPendingFlatReview: true,
+	}
+	got := Route(s)
+	if got == nil || got.Agent != "editor" {
+		t.Fatalf("expected editor for pending flat review, got %+v", got)
+	}
+	if got.Task != "Đánh giá batch chương 1-5 (scope=batch)" {
+		t.Errorf("task mismatch: %q", got.Task)
+	}
+	if got.Reason != "Review định kỳ chưa hoàn thành" {
+		t.Errorf("reason mismatch: %q", got.Reason)
+	}
+	if got.Chapter != 0 {
+		t.Errorf("nhiệm vụ editor không gắn chương cụ thể, got Chapter=%d", got.Chapter)
+	}
+}
+
+func TestRoute_FlatReviewDoneContinuesWriter(t *testing.T) {
+	// Batch đã review xong (HasPendingFlatReview=false) → tiếp tục viết chương kế.
+	s := State{
+		Progress:             flatProgress([]int{1, 2, 3, 4, 5}),
+		LastCompleted:        5,
+		HasPendingFlatReview: false,
+	}
+	got := Route(s)
+	if got == nil || got.Agent != "writer" {
+		t.Fatalf("expected writer after review done, got %+v", got)
+	}
+	if got.Task != "Viết chương 6" {
+		t.Errorf("expected 'Viết chương 6', got %q", got.Task)
+	}
+	if got.Chapter != 6 {
+		t.Errorf("expected Chapter=6, got %d", got.Chapter)
 	}
 }
 

@@ -41,6 +41,11 @@ type State struct {
 	HasArcSummary    bool
 	HasVolumeSummary bool
 
+	// HasPendingFlatReview: chế độ flat (không phân tầng) còn nợ review định kỳ hay không —
+	// tính từ đĩa (batch chương gần nhất là bội của ReviewInterval nhưng chưa có file review global phủ lên).
+	// Chỉ có ý nghĩa khi !Progress.Layered.
+	HasPendingFlatReview bool
+
 	// Các mục thiếu trong cài đặt nền tảng (tín hiệu bổ sung trong giai đoạn lập kế hoạch).
 	FoundationMissing []string
 }
@@ -51,14 +56,13 @@ type State struct {
 //  1. Phase=Complete        → nil (LLM xuất tóm tắt)
 //  2. Phase!=Writing        → nil (LLM quyết định chọn kiến trúc sư / bổ sung kế hoạch)
 //  3. PendingRewrites không rỗng  → writer viết lại/đánh bóng theo hàng đợi
-//  4. Flow=Reviewing        → nil (editor vừa lưu review, phân nhánh verdict do tầng công cụ xử lý)
-//  5. Flow=Steering         → nil (đang xử lý can thiệp của người dùng)
-//  6. Thiếu đánh giá cuối cung truyện           → editor(arc review)
-//  7. Có đánh giá nhưng thiếu tóm tắt cung  → editor(arc summary)
-//  8. Cuối tập có tóm tắt cung nhưng thiếu tóm tắt tập → editor(volume summary)
-//  9. Cung truyện tiếp theo là skeleton           → architect_long(expand_arc)
-//
-// 10. Cuối tập cần quyết định tập tiếp theo       → architect_long(append_volume / complete_book)
+//  4. Flow=Steering         → nil (đang xử lý can thiệp của người dùng)
+//  5. Thiếu đánh giá cuối cung truyện           → editor(arc review)
+//  6. Có đánh giá nhưng thiếu tóm tắt cung  → editor(arc summary)
+//  7. Cuối tập có tóm tắt cung nhưng thiếu tóm tắt tập → editor(volume summary)
+//  8. Cung truyện tiếp theo là skeleton           → architect_long(expand_arc)
+//  9. Cuối tập cần quyết định tập tiếp theo       → architect_long(append_volume / complete_book)
+// 10. Flat mode còn nợ review định kỳ           → editor(batch review)
 // 11. Các trường hợp còn lại                  → writer(viết next_chapter)
 func Route(s State) *Instruction {
 	p := s.Progress
@@ -91,17 +95,12 @@ func Route(s State) *Instruction {
 		}
 	}
 
-	// 4. Đang đánh giá: save_review vừa ghi đĩa, nâng/hạ cấp verdict do tầng công cụ xử lý, router không can thiệp
-	if p.Flow == domain.FlowReviewing {
-		return nil
-	}
-
-	// 5. Đang xử lý can thiệp của người dùng: Coordinator đang quyết định, Host không chiếm quyền
+	// 4. Đang xử lý can thiệp của người dùng: Coordinator đang quyết định, Host không chiếm quyền
 	if p.Flow == domain.FlowSteering {
 		return nil
 	}
 
-	// 6-10. Hậu xử lý cuối cung truyện trong chế độ phân lớp
+	// 5-9. Hậu xử lý cuối cung truyện trong chế độ phân lớp
 	if p.Layered && s.ArcBoundary != nil && s.ArcBoundary.IsArcEnd {
 		b := s.ArcBoundary
 		switch {
@@ -138,7 +137,21 @@ func Route(s State) *Instruction {
 		}
 	}
 
-	// 12. Tiếp tục viết bình thường
+	// 10. Chế độ flat: cưỡng chế review định kỳ mỗi ReviewInterval chương. Trước đây Router luôn
+	// dispatch "viết chương kế", việc gọi editor phụ thuộc hoàn toàn Coordinator LLM đọc tín hiệu
+	// review_required và tuân prompt — model yếu bỏ qua → truyện chạy hàng chục chương không review.
+	// Nay quyết định dựa trên sự thật đĩa (HasPendingFlatReview suy từ file review), sống sót qua crash.
+	if !p.Layered && s.HasPendingFlatReview {
+		to := (s.LastCompleted / domain.ReviewInterval) * domain.ReviewInterval
+		from := to - domain.ReviewInterval + 1
+		return &Instruction{
+			Agent:  "editor",
+			Task:   fmt.Sprintf("Đánh giá batch chương %d-%d (scope=batch)", from, to),
+			Reason: "Review định kỳ chưa hoàn thành",
+		}
+	}
+
+	// 11. Tiếp tục viết bình thường
 	next := p.NextChapter()
 	if next <= 0 {
 		return nil

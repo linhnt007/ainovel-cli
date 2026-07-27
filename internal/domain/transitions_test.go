@@ -30,12 +30,11 @@ func TestCanTransitionFlow(t *testing.T) {
 		want bool
 	}{
 		{from: "", to: FlowRewriting, want: true},
-		{from: FlowWriting, to: FlowReviewing, want: true},
-		{from: FlowReviewing, to: FlowPolishing, want: true},
+		{from: FlowWriting, to: FlowRewriting, want: true},
 		{from: FlowRewriting, to: FlowWriting, want: true},
 		{from: FlowSteering, to: FlowRewriting, want: true},
-		{from: FlowRewriting, to: FlowReviewing, want: false},
-		{from: FlowPolishing, to: FlowReviewing, want: false},
+		{from: FlowRewriting, to: FlowPolishing, want: false},
+		{from: FlowPolishing, to: FlowSteering, want: true},
 	}
 	for _, tt := range tests {
 		if got := CanTransitionFlow(tt.from, tt.to); got != tt.want {

@@ -17,11 +17,10 @@ import (
 // Flow đại diện cho luồng đang hoạt động, cho phép chuyển đổi trong giai đoạn viết,
 // nhưng không cho phép các bước nhảy bất thường rõ ràng:
 //
-//	writing   -> reviewing / rewriting / polishing / steering / writing
-//	reviewing -> writing / rewriting / polishing / steering / reviewing
+//	writing   -> rewriting / polishing / steering / writing
 //	rewriting -> writing / steering / rewriting
 //	polishing -> writing / steering / polishing
-//	steering  -> writing / reviewing / rewriting / polishing / steering
+//	steering  -> writing / rewriting / polishing / steering
 //
 // Trạng thái rỗng (zero value) được coi là “chưa khởi tạo”, cho phép chuyển sang bất kỳ trạng thái hợp lệ không rỗng nào.
 
@@ -69,15 +68,13 @@ func CanTransitionFlow(from, to FlowState) bool {
 
 	switch from {
 	case FlowWriting:
-		return to == FlowReviewing || to == FlowRewriting || to == FlowPolishing || to == FlowSteering
-	case FlowReviewing:
-		return to == FlowWriting || to == FlowRewriting || to == FlowPolishing || to == FlowSteering
+		return to == FlowRewriting || to == FlowPolishing || to == FlowSteering
 	case FlowRewriting:
 		return to == FlowWriting || to == FlowSteering
 	case FlowPolishing:
 		return to == FlowWriting || to == FlowSteering
 	case FlowSteering:
-		return to == FlowWriting || to == FlowReviewing || to == FlowRewriting || to == FlowPolishing
+		return to == FlowWriting || to == FlowRewriting || to == FlowPolishing
 	default:
 		return false
 	}
