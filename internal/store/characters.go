@@ -90,6 +90,23 @@ func renderCharacters(chars []domain.Character) string {
 		if len(c.Traits) > 0 {
 			fmt.Fprintf(&b, "**Đặc điểm**：%s\n\n", strings.Join(c.Traits, "、"))
 		}
+		// Voice card (tier core/important): render khi có, nhân vật cũ thiếu voice thì bỏ qua êm.
+		if !c.Voice.IsEmpty() {
+			b.WriteString("**Hồ sơ giọng nói**：\n")
+			if len(c.Voice.Catchphrases) > 0 {
+				fmt.Fprintf(&b, "- Câu cửa miệng：%s\n", strings.Join(c.Voice.Catchphrases, "、"))
+			}
+			if c.Voice.SentenceStyle != "" {
+				fmt.Fprintf(&b, "- Kiểu câu：%s\n", c.Voice.SentenceStyle)
+			}
+			if c.Voice.SubtextLevel != "" {
+				fmt.Fprintf(&b, "- Mức ẩn ý：%s\n", c.Voice.SubtextLevel)
+			}
+			if c.Voice.Taboo != "" {
+				fmt.Fprintf(&b, "- Cấm kỵ khi nói：%s\n", c.Voice.Taboo)
+			}
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }

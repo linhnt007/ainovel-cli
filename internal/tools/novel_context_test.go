@@ -1132,7 +1132,7 @@ func TestContextToolAgingThresholdFallsBackTo30WhenTotalUnknown(t *testing.T) {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.World.SaveForeshadowLedger([]domain.ForeshadowEntry{
-		{ID: "old_debt", Description: "十年前的一笔旧账", PlantedAt: 5, Status: "planted"},   // tuổi 35 >= 30 → nổi
+		{ID: "old_debt", Description: "十年前的一笔旧账", PlantedAt: 5, Status: "planted"},     // tuổi 35 >= 30 → nổi
 		{ID: "mid_thread", Description: "半途搁下的一桩公案", PlantedAt: 15, Status: "planted"}, // tuổi 25 < 30 → không nổi
 	}); err != nil {
 		t.Fatalf("SaveForeshadowLedger: %v", err)
@@ -1158,5 +1158,133 @@ func TestContextToolAgingThresholdFallsBackTo30WhenTotalUnknown(t *testing.T) {
 	}
 	if containsRecallSummary(payload.Selected.StoryThreads, "公案") {
 		t.Fatalf("25-chapter-old foreshadow must stay out under default threshold 30 (not scale floor 10), got %+v", payload.Selected.StoryThreads)
+	}
+}
+
+// Part M — voice card: nhân vật có voice VÀ xuất hiện trong chapter_plan → working_memory.voice_cards
+// chứa đúng card của nhân vật đó; nhân vật có voice nhưng VẮNG MẶT trong plan không được nạp (chỉ nhân vật của chương).
+func TestContextToolInjectsVoiceCardsForChapterCharacters(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 5); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 2, Title: "Đối đầu", CoreEvent: "cuộc chạm mặt"},
+	}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	if err := s.Characters.Save([]domain.Character{
+		{Name: "Lâm Viễn", Role: "chính", Tier: "core", Voice: &domain.CharacterVoiceCard{
+			Catchphrases:  []string{"'ừ thì'"},
+			SentenceStyle: "câu ngắn, cộc",
+			Taboo:         "không bao giờ văn hoa",
+		}},
+		// Tô Ly có voice nhưng KHÔNG xuất hiện trong chapter_plan → không được nạp.
+		{Name: "Tô Ly", Role: "phụ", Tier: "important", Voice: &domain.CharacterVoiceCard{
+			SentenceStyle: "nhiều từ Hán Việt trang trọng",
+		}},
+	}); err != nil {
+		t.Fatalf("SaveCharacters: %v", err)
+	}
+	if err := s.Drafts.SaveChapterPlan(domain.ChapterPlan{
+		Chapter:  2,
+		Title:    "Đối đầu",
+		Goal:     "Lâm Viễn quyết định ra tay",
+		Conflict: "Lâm Viễn đối mặt kẻ thù cũ",
+	}); err != nil {
+		t.Fatalf("SaveChapterPlan: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 2})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working, ok := payload["working_memory"].(map[string]any)
+	if !ok {
+		t.Fatal("missing working_memory")
+	}
+	cardsRaw, ok := working["voice_cards"].([]any)
+	if !ok {
+		t.Fatalf("expected working_memory.voice_cards array, got %T", working["voice_cards"])
+	}
+	if len(cardsRaw) != 1 {
+		t.Fatalf("expected exactly 1 voice card (only chapter cast), got %d: %+v", len(cardsRaw), cardsRaw)
+	}
+	card, _ := cardsRaw[0].(map[string]any)
+	if card["character"] != "Lâm Viễn" {
+		t.Fatalf("expected voice card for Lâm Viễn, got %+v", card)
+	}
+	if _, ok := card["catchphrases"].([]any); !ok {
+		t.Fatalf("expected catchphrases in voice card, got %+v", card)
+	}
+	if card["taboo"] != "không bao giờ văn hoa" {
+		t.Fatalf("expected taboo field, got %+v", card)
+	}
+	// Nhân vật vắng mặt không được lọt vào.
+	for _, c := range cardsRaw {
+		if m, _ := c.(map[string]any); m["character"] == "Tô Ly" {
+			t.Fatalf("absent character Tô Ly must not appear in voice_cards, got %+v", cardsRaw)
+		}
+	}
+}
+
+// Part M — nhân vật thiếu voice (nhân vật cũ / tier thấp) → không panic, không tạo mục voice_cards rỗng.
+func TestContextToolOmitsVoiceCardsWhenCharactersLackVoice(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 5); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 2, Title: "Đối đầu", CoreEvent: "cuộc chạm mặt"},
+	}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	// Nhân vật cũ: không có trường voice; và một nhân vật có con trỏ voice nhưng rỗng (IsEmpty) — đều phải bỏ qua êm.
+	if err := s.Characters.Save([]domain.Character{
+		{Name: "Lâm Viễn", Role: "chính", Tier: "core"},
+		{Name: "Tô Ly", Role: "phụ", Tier: "important", Voice: &domain.CharacterVoiceCard{}},
+	}); err != nil {
+		t.Fatalf("SaveCharacters: %v", err)
+	}
+	if err := s.Drafts.SaveChapterPlan(domain.ChapterPlan{
+		Chapter: 2,
+		Title:   "Đối đầu",
+		Goal:    "Lâm Viễn và Tô Ly chạm mặt",
+	}); err != nil {
+		t.Fatalf("SaveChapterPlan: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 2})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working, ok := payload["working_memory"].(map[string]any)
+	if !ok {
+		t.Fatal("missing working_memory")
+	}
+	if _, ok := working["voice_cards"]; ok {
+		t.Fatalf("expected no voice_cards when no character has a voice, got %+v", working["voice_cards"])
 	}
 }

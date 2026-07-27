@@ -39,6 +39,8 @@ Kiểm tra từng chiều, mỗi chiều chỉ cần cho **điểm (0-100)** (k�
 - Hành vi nhân vật có phù hợp với thiết lập tính cách và cung truyện không
 - Phong cách đối thoại có khớp với danh tính nhân vật không
 - Động cơ nhân vật có hợp lý và mạch lạc không
+- **Đối thoại khớp voice card**: Nếu `working_memory.voice_cards` tồn tại (hồ sơ giọng nói của các nhân vật xuất hiện trong chương: `character` + `catchphrases` / `sentence_style` / `subtext_level` / `taboo`), đối chiếu lời thoại của từng nhân vật với card của họ. Lệch giọng — không dùng đặc trưng đã khai, kiểu câu sai, hoặc **vi phạm `taboo`** (ví dụ nhân vật khai "không bao giờ văn hoa" lại nói một câu văn hoa) — là một issue chiều character: **bắt buộc trích dẫn nguyên văn câu lệch và nêu rõ tên nhân vật**, không kết luận chung chung.
+- **Đề xuất cập nhật voice**: Nếu một nhân vật đã phát triển giọng mới **có chủ ý** qua diễn biến (không phải lệch ngẫu nhiên), được đề xuất Kiến trúc sư cập nhật voice của nhân vật đó qua cơ chế cập nhật nhân vật sẵn có (`save_foundation(type="characters")` — ghi lại card mới cùng phần còn lại của hồ sơ). Nêu đề xuất này trong issue/suggestion, không tự sửa.
 
 #### Chiều ba: Cân bằng nhịp điệu (pacing)
 - Có liên tiếp nhiều chương cùng loại không

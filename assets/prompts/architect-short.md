@@ -114,6 +114,21 @@ Dựa trên tiền đề và đề cương tạo hồ sơ nhân vật (định d
 - `description`: string（mô tả tổng thể）
 - `arc`: **string**（mô tả cung truyện toàn bộ thành đoạn văn, không phải object `{start/middle/end}`; dùng cách diễn đạt "đầu truyện…cuối truyện…"）
 - `traits`: **string[]**（mảng chuỗi đặc điểm, như `["bình tĩnh","đa nghi"]`, không phải object）
+- `voice`: object (**BẮT BUỘC với nhân vật chính và nhân vật phụ quan trọng**) — hồ sơ giọng nói để chống đồng nhất hoá đối thoại. Các trường: `catchphrases` (string[] câu cửa miệng/từ đệm đặc trưng), `sentence_style` (string kiểu câu), `subtext_level` (string mức ẩn ý), `taboo` (string điều nhân vật không bao giờ làm khi nói).
+
+  **Mọi trường phải KIỂM CHỨNG ĐƯỢC TRONG CÂU CHỮ** — đọc card phải biết chính xác câu thoại phải gõ ra thế nào.
+
+  Ví dụ TỐT (cụ thể, kiểm chứng được):
+  ```json
+  "voice": {
+    "catchphrases": ["'ừ thì'", "'biết rồi'"],
+    "sentence_style": "câu ngắn, cộc; hầu như không dùng từ Hán Việt trang trọng",
+    "subtext_level": "cao — hiếm khi nói thẳng cảm xúc",
+    "taboo": "không bao giờ văn hoa, không giải thích dài"
+  }
+  ```
+
+  Ví dụ SÁO (**cấm** — mô tả cảm tính, nhân vật nào cũng vừa): `"voice": {"sentence_style": "nói năng điềm đạm, sâu sắc"}`
 
 Yêu cầu:
 

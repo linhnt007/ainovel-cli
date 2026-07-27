@@ -51,6 +51,7 @@ Nếu trong ngữ cảnh có `chapter_contract`, đó là định nghĩa hoàn t
 - Mở đầu nhanh chóng thiết lập xung đột, hồi hộp, khao khát hoặc cảm giác bất thường — ít dùng hồi tưởng trừu tượng.
 - Dùng hành động, đối thoại, chi tiết cảm quan để thúc đẩy cốt truyện — ít dùng tóm tắt và khái quát.
 - Đối thoại nhân vật phải có sự khác biệt danh tính, ẩn ý và mục đích hành động — không thuyết giáo.
+- **Viết đối thoại theo voice card**: Nếu `working_memory.voice_cards` tồn tại, mỗi mục là hồ sơ giọng nói của một nhân vật xuất hiện trong chương này (`character` + các trường `catchphrases` / `sentence_style` / `subtext_level` / `taboo`). Khi nhân vật đó nói, bám sát card: dùng đúng câu cửa miệng/từ đệm, giữ kiểu câu và mức ẩn ý đã khai, và **không bao giờ vi phạm `taboo`**. Đây là tuyến phòng thủ chính chống việc mọi nhân vật (kể cả nhân vật chính) dần nói cùng một giọng. Nhân vật không có trong `voice_cards` thì giữ giọng nhất quán với các chương trước.
 - Thể hiện cảm xúc qua phản ứng cơ thể và lựa chọn — không dán nhãn trực tiếp.
 - Thay đổi quan hệ phải có sự kiện kích hoạt — không nhảy vọt từ xa lạ sang tin tưởng tuyệt đối trong một chương.
 - Phát hành bí mật từng phần — không giải thích trước những bí ẩn lớn mà đề cương chưa yêu cầu.

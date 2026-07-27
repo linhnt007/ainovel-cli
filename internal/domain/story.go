@@ -24,6 +24,29 @@ type Character struct {
 	Arc         string   `json:"arc"`
 	Traits      []string `json:"traits"`
 	Tier        string   `json:"tier,omitempty"` // core / important / secondary / decorative (mặc định là important)
+	// Voice: hồ sơ giọng nói dành cho nhân vật core/important — chống đồng nhất hoá giọng đối thoại
+	// (sau vài chục chương mọi nhân vật dễ nói cùng giọng của model). Con trỏ + omitempty: nhân vật cũ
+	// hoặc tier thấp thiếu trường này unmarshal về nil, các nơi nạp phải bỏ qua êm (xem CharacterVoiceCard.IsEmpty).
+	Voice *CharacterVoiceCard `json:"voice,omitempty"`
+}
+
+// CharacterVoiceCard là hồ sơ giọng nói của một nhân vật: các đặc điểm KIỂM CHỨNG ĐƯỢC trong câu chữ,
+// không phải mô tả cảm tính ("nói năng điềm đạm, sâu sắc"). Chỉ sinh cho tier core/important; tùy chọn.
+// Được nạp per-chương (chỉ nhân vật xuất hiện trong chương) vào working memory để Người viết viết đối thoại
+// theo card và Biên tập viên chấm đối thoại lệch giọng.
+type CharacterVoiceCard struct {
+	Catchphrases  []string `json:"catchphrases,omitempty"`   // câu cửa miệng, từ đệm đặc trưng
+	SentenceStyle string   `json:"sentence_style,omitempty"` // kiểu câu (ví dụ: "câu ngắn, cộc; hầu như không dùng từ Hán Việt trang trọng")
+	SubtextLevel  string   `json:"subtext_level,omitempty"`  // mức ẩn ý (ví dụ: "cao — hiếm khi nói thẳng cảm xúc")
+	Taboo         string   `json:"taboo,omitempty"`          // điều nhân vật này không bao giờ làm khi nói (ví dụ: "không bao giờ văn hoa, không giải thích dài")
+}
+
+// IsEmpty báo card rỗng (nil hoặc mọi trường trống) — dùng để bỏ qua êm nhân vật thiếu voice, tránh tạo mục rỗng.
+func (v *CharacterVoiceCard) IsEmpty() bool {
+	if v == nil {
+		return true
+	}
+	return len(v.Catchphrases) == 0 && v.SentenceStyle == "" && v.SubtextLevel == "" && v.Taboo == ""
 }
 
 // VolumeOutline là đề cương cấp tập (chế độ phân tầng cho truyện dài).

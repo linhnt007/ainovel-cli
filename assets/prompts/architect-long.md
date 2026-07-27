@@ -61,6 +61,28 @@ Mảng JSON, kiểu trường của mỗi nhân vật **nghiêm ngặt như sau*
 - `arc`: **string** (mô tả cung truyện nhân vật thành một đoạn liên tục, không phải object `{start/middle/end}`. Cung truyện xuyên tập dùng "giai đoạn đầu… giữa… cuối…" trong cùng một đoạn văn)
 - `traits`: **string[]** (mảng chuỗi đặc điểm, ví dụ `["bình tĩnh","đa nghi","trọng tình"]`, không phải object `{trait: ...}`)
 - `tier`: string (tùy chọn, `core` / `important` / `secondary` / `decorative`)
+- `voice`: object (**BẮT BUỘC với nhân vật `core` và `important`**; bỏ qua với secondary/decorative) — hồ sơ giọng nói để chống đồng nhất hoá đối thoại. Các trường:
+  - `catchphrases`: string[] — câu cửa miệng / từ đệm đặc trưng thực sự sẽ xuất hiện trong lời thoại
+  - `sentence_style`: string — kiểu câu kiểm chứng được
+  - `subtext_level`: string — mức ẩn ý (nói thẳng hay giấu)
+  - `taboo`: string — điều nhân vật này KHÔNG BAO GIỜ làm khi nói
+
+  **Nguyên tắc: mọi trường phải KIỂM CHỨNG ĐƯỢC TRONG CÂU CHỮ** — người viết đọc card phải biết chính xác phải gõ ra câu thoại thế nào, và biên tập phải trích dẫn được câu lệch.
+
+  Ví dụ TỐT (cụ thể, kiểm chứng được):
+  ```json
+  "voice": {
+    "catchphrases": ["'ừ thì'", "'biết rồi'"],
+    "sentence_style": "câu ngắn, cộc; hầu như không dùng từ Hán Việt trang trọng; hay bỏ lửng nửa câu",
+    "subtext_level": "cao — hiếm khi nói thẳng cảm xúc, thường nói ngược lại điều đang nghĩ",
+    "taboo": "không bao giờ văn hoa, không giải thích dài động cơ của mình"
+  }
+  ```
+
+  Ví dụ SÁO (**cấm** — mô tả cảm tính, không kiểm chứng được, mọi nhân vật đều vừa):
+  ```json
+  "voice": {"sentence_style": "nói năng điềm đạm, sâu sắc, có chiều sâu nội tâm", "subtext_level": "phong phú"}
+  ```
 
 Yêu cầu: cung truyện của nhân vật chính và nhân vật phụ quan trọng phải có thể phát triển qua nhiều tập; tuyến quan hệ cần có sức căng dài hạn; thiết kế xoay quanh cam kết thực hiện cốt lõi, tránh chồng chất danh từ thiết lập.
 

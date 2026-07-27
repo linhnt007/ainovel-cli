@@ -2,6 +2,7 @@ package tools
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
@@ -354,6 +355,7 @@ func (t *ContextTool) buildChapterContext(result map[string]any, state contextBu
 
 	t.buildChapterEpisodicMemory(&envelope, state, warn)
 	t.buildChapterWorkingMemory(&envelope, state, warn)
+	t.buildChapterVoiceCards(&envelope, state, warn)
 	t.buildChapterReferencePack(&envelope, state)
 	t.buildChapterSelectedMemory(&envelope, state, warn)
 	t.buildStyleStats(&envelope, state)
@@ -471,6 +473,87 @@ func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope
 			envelope.Working["previous_tail"] = string(runes)
 		}
 	}
+}
+
+// buildChapterVoiceCards nạp voice card của các nhân vật XUẤT HIỆN trong chương (khớp theo chapter_plan,
+// fallback sang đề cương chương khi chưa có plan) vào working_memory.voice_cards.
+//
+// Chỉ nạp nhân vật của chương — KHÔNG inject toàn dàn — vì hai lý do:
+//   - chống phình context (voice card chỉ tốn vài trăm token khi giới hạn ở cast của chương);
+//   - chống đồng nhất hoá giọng đối thoại: Người viết cần card của đúng nhân vật đang nói trong chương này,
+//     recent_cast chỉ cứu nhân vật phụ nên chính diện vẫn cần đường nạp riêng.
+//
+// Chỉ nhân vật core/important mới có voice (do architect sinh). Nhân vật cũ / tier thấp thiếu voice
+// → IsEmpty=true → bỏ qua êm, không tạo mục rỗng. Không có nhân vật nào khớp → không tiêm key.
+func (t *ContextTool) buildChapterVoiceCards(envelope *chapterContextEnvelope, state contextBuildState, warn func(string, error)) {
+	chars, err := t.store.Characters.Load()
+	if err != nil {
+		warn("voice_cards", err)
+		return
+	}
+	if len(chars) == 0 {
+		return
+	}
+
+	// Ghép văn bản mô tả chương để khớp tên/bí danh nhân vật. Ưu tiên chapter_plan (Người viết tự lập, mô tả
+	// đúng nhân vật của chương); khi chưa có plan thì fallback sang đề cương chương để voice vẫn nạp được
+	// ở các luồng chưa kịp lập plan. Không có văn bản nào → không suy ra được cast → không tiêm.
+	matchText := chapterPlanMatchText(state.chapterPlan)
+	if matchText == "" && state.currentEntry != nil {
+		matchText = outlineEntryMatchText(state.currentEntry)
+	}
+	if matchText == "" {
+		return
+	}
+
+	var cards []map[string]any
+	for _, c := range chars {
+		if c.Voice.IsEmpty() {
+			continue // nhân vật thiếu voice (tier thấp hoặc nhân vật cũ) → bỏ qua êm
+		}
+		if !matchCharacter(matchText, c) {
+			continue // chỉ nhân vật xuất hiện trong chương
+		}
+		card := map[string]any{"character": c.Name}
+		if len(c.Voice.Catchphrases) > 0 {
+			card["catchphrases"] = c.Voice.Catchphrases
+		}
+		if c.Voice.SentenceStyle != "" {
+			card["sentence_style"] = c.Voice.SentenceStyle
+		}
+		if c.Voice.SubtextLevel != "" {
+			card["subtext_level"] = c.Voice.SubtextLevel
+		}
+		if c.Voice.Taboo != "" {
+			card["taboo"] = c.Voice.Taboo
+		}
+		cards = append(cards, card)
+	}
+	if len(cards) > 0 {
+		envelope.Working["voice_cards"] = cards
+	}
+}
+
+// chapterPlanMatchText ghép các trường văn bản của chapter_plan để khớp tên nhân vật của chương.
+// plan nil → chuỗi rỗng (để buildChapterVoiceCards fallback sang đề cương chương).
+func chapterPlanMatchText(plan *domain.ChapterPlan) string {
+	if plan == nil {
+		return ""
+	}
+	parts := []string{plan.Title, plan.Goal, plan.Conflict, plan.Hook, plan.EmotionArc, plan.Notes}
+	parts = append(parts, plan.Contract.RequiredBeats...)
+	parts = append(parts, plan.Contract.ForbiddenMoves...)
+	parts = append(parts, plan.Contract.ContinuityChecks...)
+	parts = append(parts, plan.Contract.PayoffPoints...)
+	return strings.Join(parts, " ")
+}
+
+// outlineEntryMatchText ghép các trường văn bản của đề cương chương (dùng khi chưa có chapter_plan).
+func outlineEntryMatchText(entry *domain.OutlineEntry) string {
+	if entry == nil {
+		return ""
+	}
+	return strings.Join(append([]string{entry.Title, entry.CoreEvent, entry.Hook}, entry.Scenes...), " ")
 }
 
 func (t *ContextTool) buildChapterSelectedMemory(envelope *chapterContextEnvelope, state contextBuildState, warn func(string, error)) {
