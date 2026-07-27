@@ -78,6 +78,18 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 		return nil, err
 	}
 
+	// Đọc review record trước của chương để mang theo trạng thái theo dõi vòng lặp:
+	// rewrite_count (đếm dồn) và aesthetic_polished (đã polish vì thẩm mỹ chưa). File này bị
+	// ghi đè mỗi lần review, nên phải đọc TRƯỚC khi SaveReview. Lỗi/thiếu file → coi như lần đầu.
+	var priorRewriteCount int
+	var priorAestheticPolished bool
+	if prior, err := t.store.World.LoadReview(r.Chapter); err == nil && prior != nil {
+		priorRewriteCount = prior.RewriteCount
+		priorAestheticPolished = prior.AestheticPolished
+	}
+	// aesthetic_polished mang theo từ lần trước; chỉ bật thêm (không bao giờ tắt) trong lần này.
+	aestheticPolished := priorAestheticPolished
+
 	// Cổng kiểm tra thẻ điểm — logic nâng cấp nội tuyến từ policy/review.go
 	finalVerdict := r.Verdict
 	var escalationReason string
@@ -93,7 +105,8 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 		}
 		// Cổng kiểm tra thẻ điểm
 		if finalVerdict == "accept" {
-			if gate := evaluateScorecardGate(r.Dimensions); gate != "" {
+			gate, triggeredAesthetic := evaluateScorecardGate(r.Dimensions, priorAestheticPolished)
+			if gate != "" {
 				if strings.Contains(gate, "rewrite") {
 					finalVerdict = "rewrite"
 				} else {
@@ -101,7 +114,42 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 				}
 				escalationReason = gate
 			}
+			if triggeredAesthetic {
+				aestheticPolished = true
+			}
+			// Ghi chú khi aesthetic vẫn dưới ngưỡng nhưng đã hết trần polish thẩm mỹ:
+			// chấp nhận có chủ đích (không nâng verdict), để lại dấu vết trong escalation_reason.
+			if finalVerdict == "accept" && priorAestheticPolished {
+				if aes := findDimension(r.Dimensions, "aesthetic"); aes != nil && aes.Score < aestheticPolishThreshold {
+					escalationReason = fmt.Sprintf(
+						"aesthetic(%d) vẫn dưới ngưỡng %d nhưng chương đã polish thẩm mỹ 1 vòng → chấp nhận, ghi nợ giọng văn",
+						aes.Score, aestheticPolishThreshold)
+				}
+			}
 		}
+	}
+
+	// Trần rewrite/chương: nếu chương đã đi qua đủ maxRewritePerChapter vòng mà lần này verdict
+	// vẫn là rewrite/polish → ép accept, gắn cờ quality_debt để không kẹt loop (xem hằng số trên).
+	// Kiểm tra SAU khi gate đã nâng verdict (gate có thể biến accept→rewrite/polish).
+	if (finalVerdict == "rewrite" || finalVerdict == "polish") && priorRewriteCount >= maxRewritePerChapter {
+		r.QualityDebt = true
+		r.QualityDebtReason = fmt.Sprintf(
+			"đã đạt trần %d vòng rewrite/polish nhưng verdict vẫn là %s (%s) → ép accept, gánh nợ chất lượng",
+			maxRewritePerChapter, finalVerdict, escalationReason)
+		finalVerdict = "accept"
+		escalationReason = r.QualityDebtReason
+		// Chương không còn vào hàng đợi nữa → record/response phản ánh accept, không kèm chương ảnh hưởng.
+		r.AffectedChapters = nil
+	}
+
+	// Ghi trạng thái theo dõi vào record trước khi lưu.
+	r.AestheticPolished = aestheticPolished
+	// rewrite_count chỉ tăng khi chương THỰC SỰ vào hàng đợi rewrite/polish lần này; nếu bị trần
+	// ép về accept thì không tăng (chương không còn quay vòng nữa).
+	r.RewriteCount = priorRewriteCount
+	if finalVerdict == "rewrite" || finalVerdict == "polish" {
+		r.RewriteCount = priorRewriteCount + 1
 	}
 
 	affected := r.AffectedChapters
@@ -166,16 +214,19 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	}
 
 	return json.Marshal(map[string]any{
-		"saved":             true,
-		"chapter":           r.Chapter,
-		"scope":             r.Scope,
-		"verdict":           r.Verdict,
-		"final_verdict":     finalVerdict,
-		"escalation_reason": escalationReason,
-		"affected_chapters": affected,
-		"issues":            len(r.Issues),
-		"next_flow":         nextFlow,
-		"next_chapter":      nextChapter,
+		"saved":              true,
+		"chapter":            r.Chapter,
+		"scope":              r.Scope,
+		"verdict":            r.Verdict,
+		"final_verdict":      finalVerdict,
+		"escalation_reason":  escalationReason,
+		"affected_chapters":  affected,
+		"issues":             len(r.Issues),
+		"next_flow":          nextFlow,
+		"next_chapter":       nextChapter,
+		"rewrite_count":      r.RewriteCount,
+		"aesthetic_polished": r.AestheticPolished,
+		"quality_debt":       r.QualityDebt,
 	})
 }
 
@@ -255,13 +306,34 @@ var criticalDimensions = map[string]struct{}{
 	"continuity":  {},
 }
 
+// maxRewritePerChapter là trần số vòng rewrite/polish cho một chương.
+// Lý do: bài học các chương ch204..347 — model có thể chấm thấp mãi khiến chương kẹt
+// vòng lặp rewrite/polish vô hạn, đốt budget mà chất lượng không hội tụ. Sau đủ số vòng
+// này, ép accept và gắn cờ quality_debt còn hơn kẹt loop (auto-accept chương dưới chuẩn
+// có cờ theo dõi được, còn kẹt loop thì không ship được gì).
+const maxRewritePerChapter = 3
+
+// aestheticPolishThreshold: aesthetic < ngưỡng này kích hoạt đúng MỘT vòng polish.
+// Không bao giờ nâng thành rewrite vì thẩm mỹ — rewrite dành cho lỗi critical
+// (consistency/character/continuity), thẩm mỹ yếu chỉ đáng một vòng trau chuốt cục bộ.
+const aestheticPolishThreshold = 70
+
 // evaluateScorecardGate kiểm tra xem thẻ điểm có cần nâng cấp verdict không.
-// Trả về chuỗi rỗng nghĩa là không nâng cấp.
-func evaluateScorecardGate(dimensions []domain.DimensionScore) string {
+// Trả về chuỗi rỗng nghĩa là không nâng cấp. triggeredAesthetic=true khi việc nâng cấp
+// (một phần) do aesthetic < ngưỡng — để caller đánh dấu aesthetic_polished, chặn polish
+// lần thứ hai vì cùng lý do thẩm mỹ (trần 1 vòng).
+// aestheticAlreadyPolished: chương này đã từng bị polish vì aesthetic hay chưa (đọc từ
+// review record trước). Nếu rồi thì aesthetic thấp không còn nâng verdict nữa.
+func evaluateScorecardGate(dimensions []domain.DimensionScore, aestheticAlreadyPolished bool) (string, bool) {
 	var criticalFails []string
 	var polishIssues []string
 
 	for _, dim := range dimensions {
+		// aesthetic có cổng riêng (ngưỡng 70 + trần 1 vòng) — xử lý tách khỏi vòng lặp chung,
+		// nếu để chung thì warning aesthetic sẽ luôn nâng polish, phá vỡ trần 1 vòng.
+		if dim.Dimension == "aesthetic" {
+			continue
+		}
 		_, isCritical := criticalDimensions[dim.Dimension]
 		if isCritical && (dim.Verdict == "fail" || dim.Score < 60) {
 			criticalFails = append(criticalFails, fmt.Sprintf("%s(%d)", dim.Dimension, dim.Score))
@@ -271,10 +343,33 @@ func evaluateScorecardGate(dimensions []domain.DimensionScore) string {
 	}
 
 	if len(criticalFails) > 0 {
-		return fmt.Sprintf("rewrite: chiều quan trọng không đạt chuẩn %v", criticalFails)
+		return fmt.Sprintf("rewrite: chiều quan trọng không đạt chuẩn %v", criticalFails), false
 	}
+
+	// Cổng aesthetic: dưới ngưỡng thì nâng lên polish, nhưng chỉ đúng một lần mỗi chương.
+	triggeredAesthetic := false
+	if aes := findDimension(dimensions, "aesthetic"); aes != nil && aes.Score < aestheticPolishThreshold {
+		if !aestheticAlreadyPolished {
+			// Lần đầu aesthetic dưới ngưỡng → nâng polish và đánh dấu để lần sau không nâng lại.
+			polishIssues = append(polishIssues, fmt.Sprintf("aesthetic(%d)", aes.Score))
+			triggeredAesthetic = true
+		}
+		// Đã polish vì aesthetic một lần rồi: không thêm vào polishIssues → chấp nhận kèm ghi chú,
+		// tránh đổi "ship văn xấu" lấy "kẹt loop".
+	}
+
 	if len(polishIssues) > 0 {
-		return fmt.Sprintf("polish: một số chiều cần trau chuốt thêm %v", polishIssues)
+		return fmt.Sprintf("polish: một số chiều cần trau chuốt thêm %v", polishIssues), triggeredAesthetic
 	}
-	return ""
+	return "", false
+}
+
+// findDimension trả về con trỏ tới chiều chỉ định trong slice, nil nếu không có.
+func findDimension(dimensions []domain.DimensionScore, name string) *domain.DimensionScore {
+	for i := range dimensions {
+		if dimensions[i].Dimension == name {
+			return &dimensions[i]
+		}
+	}
+	return nil
 }

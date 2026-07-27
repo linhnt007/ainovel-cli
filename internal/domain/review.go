@@ -61,6 +61,14 @@ type ReviewEntry struct {
 	Verdict          string             `json:"verdict"`                   // accept / polish / rewrite
 	Summary          string             `json:"summary"`
 	AffectedChapters []int              `json:"affected_chapters,omitempty"` // số chương cần viết lại/đánh bóng
+
+	// ── Theo dõi vòng lặp chất lượng (thêm ở Wave 2) ──
+	// Các trường dưới đây optional + omitempty: review record cũ thiếu chúng => giá trị zero,
+	// tương đương hành vi cũ (backward-compatible).
+	RewriteCount      int    `json:"rewrite_count,omitempty"`       // số vòng chương đã vào rewrite/polish (đếm dồn qua các lần review)
+	AestheticPolished bool   `json:"aesthetic_polished,omitempty"`  // đã polish MỘT lần vì aesthetic < ngưỡng => lần sau không nâng verdict nữa
+	QualityDebt       bool   `json:"quality_debt,omitempty"`        // bị ép accept sau khi chạm trần rewrite => gánh nợ chất lượng
+	QualityDebtReason string `json:"quality_debt_reason,omitempty"` // lý do gánh nợ (chạm trần vòng nào)
 }
 
 // CriticalCount trả về số lượng vấn đề ở mức độ critical.

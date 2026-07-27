@@ -163,7 +163,7 @@ Mục đích của verdict là **đảm bảo tính mạch lạc tường thuậ
 - **polish**: Không có critical, nhưng có vấn đề cấp error ảnh hưởng trải nghiệm đọc → polish
 - **accept**: Chỉ có warning hoặc không có vấn đề → accept (đây là kết quả phổ biến nhất)
 
-**affected_chapters phải chính xác**: Chỉ liệt kê các chương cụ thể thực sự tồn tại vấn đề critical/error, không được vì "phong cách tổng thể có thể tốt hơn" mà liệt kê tất cả các chương vào. Warning về thẩm mỹ không cấu thành lý do làm lại.
+**affected_chapters phải chính xác**: Chỉ liệt kê các chương cụ thể thực sự tồn tại vấn đề critical/error, không được vì "phong cách tổng thể có thể tốt hơn" mà liệt kê tất cả các chương vào. Warning thẩm mỹ đơn lẻ không buộc làm lại; nhưng **aesthetic < 70 sẽ kích hoạt một vòng polish (tối đa một lần mỗi chương)** — hệ thống tự nâng verdict lên polish rồi tự dừng ở lần thứ hai. Vì vậy khi chấm aesthetic thấp, **PHẢI trích dẫn nguyên văn cụ thể các đoạn cần sửa** — writer sẽ dùng `edit_chapter` sửa đúng theo trích dẫn của bạn; trích dẫn mơ hồ khiến vòng polish lãng phí.
 Không được vì contract viết tích cực mà bản thân chương đã hoàn thành sự lựa chọn tường thuật hợp lý hơn, lại dễ dàng phán thành rewrite. Ưu tiên phán đoán có làm tổn hại tính mạch lạc, logic và trải nghiệm đọc không, chứ không phải có hoàn thành từng mục trong bảng kế hoạch không.
 
 ## Chế độ biên tập cấp cung truyện (truyện dài)

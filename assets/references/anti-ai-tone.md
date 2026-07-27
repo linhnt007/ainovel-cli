@@ -2,7 +2,7 @@
 
 Tài liệu này là kho tiêu chí nhận diện "văn phong AI" dùng chung cho Người viết và Biên tập viên: Người viết né tránh toàn bộ các mẫu dưới đây khi sáng tác, Biên tập viên kiểm tra theo từng mục trong chiều thẩm mỹ và **trích dẫn nguyên văn** làm bằng chứng.
 
-> Phần có thể kiểm tra máy móc (dấu gạch ngang, câu sáo cố định, từ sáo rỗng tần suất cao) đã được `working_memory.user_rules.structured` kiểm tra bắt buộc khi lưu chương. Tài liệu này chuyên quản **phán đoán ngữ nghĩa không thể cơ giới hóa**. Hai lớp bổ sung cho nhau: lớp máy móc bắt bề mặt, tài liệu này bắt chất cảm.
+> Phần có thể cơ giới hóa được thực thi ở mức hạn chế khi commit: checker **chặn cứng** `forbidden_chars`/`forbidden_phrases`, còn `fatigue_words`/số từ chỉ **cảnh báo**; `stylestat` đo pattern lặp trên toàn tập. Tài liệu này chuyên quản **phán đoán ngữ nghĩa không thể cơ giới hóa** — năm nhóm dưới đây **không có cổng máy tự động**, mà do Biên tập viên chấm ở chiều thẩm mỹ (aesthetic); aesthetic < 70 kích hoạt một vòng polish. Hai lớp bổ sung cho nhau: lớp máy bắt bề mặt, tài liệu này bắt chất cảm.
 
 ## I. Văn phong AI về cấu trúc
 
