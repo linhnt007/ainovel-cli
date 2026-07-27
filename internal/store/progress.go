@@ -30,6 +30,16 @@ func (s *ProgressStore) loadUnlocked() (*domain.Progress, error) {
 		}
 		return nil, err
 	}
+	// Chuẩn hoá giá trị flow legacy: build orchestrator-era từng persist flow="reviewing"
+	// vào meta/progress.json. Sau khi FlowReviewing bị gỡ khỏi domain, "reviewing" không
+	// còn nằm trong máy trạng thái nữa → CanTransitionFlow("reviewing", X) rơi vào default
+	// false, khiến MỌI SetFlow trên sách cũ đang dở review đều fail (kéo theo save_review
+	// không ghi được flow, cờ "còn nợ review" kẹt mãi). Normalize về writing ngay khi load:
+	// reviewing vốn chỉ là trạng thái tạm giữa các vòng viết, writing là điểm nghỉ an toàn
+	// tương đương và là nguồn hợp lệ để chuyển sang mọi flow khác.
+	if p.Flow == "reviewing" {
+		p.Flow = domain.FlowWriting
+	}
 	return &p, nil
 }
 

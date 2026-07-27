@@ -292,10 +292,30 @@ func (s *WorldStore) HasArcReview(chapter int) bool {
 	return err == nil && rv != nil && rv.Scope == "arc"
 }
 
-// LoadReview đọc kết quả đánh giá của chương.
+// LoadReview đọc kết quả đánh giá scope=chapter/arc của chương (reviews/NN.json).
 func (s *WorldStore) LoadReview(chapter int) (*domain.ReviewEntry, error) {
 	var r domain.ReviewEntry
 	if err := s.io.ReadJSON(fmt.Sprintf("reviews/%02d.json", chapter), &r); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &r, nil
+}
+
+// LoadReviewScoped đọc review từ ĐÚNG artifact path ứng với scope, phản chiếu cách
+// SaveReview chọn đường dẫn: global → reviews/NN-global.json, còn lại → reviews/NN.json.
+// Cần thiết để prior-state (rewrite_count, aesthetic_polished) đọc đúng file mà record
+// sẽ được ghi đè: review global không được thừa kế counter của record chapter-scope
+// (nếu không, batch review global có thể bị ép accept oan vì đụng trần rewrite của chapter).
+func (s *WorldStore) LoadReviewScoped(chapter int, scope string) (*domain.ReviewEntry, error) {
+	rel := fmt.Sprintf("reviews/%02d.json", chapter)
+	if scope == "global" {
+		rel = fmt.Sprintf("reviews/%02d-global.json", chapter)
+	}
+	var r domain.ReviewEntry
+	if err := s.io.ReadJSON(rel, &r); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}

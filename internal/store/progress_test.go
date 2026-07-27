@@ -1,10 +1,47 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 )
+
+// TestLoadNormalizesLegacyReviewingFlow: build orchestrator-era từng persist flow="reviewing"
+// (đã bị gỡ khỏi domain). Load phải normalize về writing để SetFlow không kẹt trên sách cũ.
+func TestLoadNormalizesLegacyReviewingFlow(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if err := store.Progress.Init("test", 10); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	// Ghi thẳng progress.json với flow legacy "reviewing" (không còn hằng số nào tương ứng).
+	legacy := []byte(`{"novel_name":"test","phase":"writing","flow":"reviewing","total_chapters":10}`)
+	if err := os.WriteFile(filepath.Join(dir, "meta", "progress.json"), legacy, 0o644); err != nil {
+		t.Fatalf("write legacy progress: %v", err)
+	}
+
+	p, err := store.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected progress, got nil")
+	}
+	if p.Flow != domain.FlowWriting {
+		t.Fatalf("expected legacy flow normalized to writing, got %q", p.Flow)
+	}
+
+	// SetFlow phải hoạt động (trước fix, "reviewing" rơi vào default:false → mọi SetFlow fail).
+	if err := store.Progress.SetFlow(domain.FlowRewriting); err != nil {
+		t.Fatalf("SetFlow after legacy normalize: %v", err)
+	}
+	p, _ = store.Progress.Load()
+	if p.Flow != domain.FlowRewriting {
+		t.Fatalf("expected flow rewriting after SetFlow, got %q", p.Flow)
+	}
+}
 
 func TestSetFlow(t *testing.T) {
 	dir := t.TempDir()

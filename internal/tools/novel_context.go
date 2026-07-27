@@ -474,7 +474,8 @@ func (t *ContextTool) ContextSummary() string {
 // trimByBudget cắt bớt result theo độ ưu tiên sao cho tổng kích thước JSON không vượt budget byte.
 // Độ ưu tiên (từ thấp đến cao): references < voice_samples < style_anchors < previous_tail < timeline
 //
-//	< recent_state_changes < foreshadow_ledger < relationship_state < các mục còn lại (không cắt)
+//	< recent_state_changes < foreshadow_ledger < relationship_state < voice_cards
+//	< narrative_contract < các mục còn lại (không cắt)
 //
 // Các key bị cắt sẽ được ghi vào result["_trimmed"] để tiện tra cứu log.
 func trimByBudget(result map[string]any, budget int) {
@@ -496,6 +497,10 @@ func trimByBudget(result map[string]any, budget int) {
 		"recent_state_changes",
 		"foreshadow_ledger",
 		"relationship_state",
+		// voice_cards / narrative_contract: giá trị cao (giọng nhân vật + chuẩn ngôi kể/thì),
+		// đặt cuối để chỉ bị cắt khi đã trim mọi thứ khác mà vẫn vượt budget.
+		"voice_cards",
+		"narrative_contract",
 	}
 
 	var trimmed []string

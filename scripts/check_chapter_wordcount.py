@@ -133,7 +133,7 @@ def check_all_chapters(
     min_words: int = DEFAULT_MIN_WORDS,
     max_words: int = DEFAULT_MAX_WORDS,
 ) -> list:
-    """Kiểm tra mọi file chương khớp mẫu trong thư mục. Trả về [] nếu thư mục lỗi."""
+    """Kiểm tra mọi file chương khớp mẫu trong thư mục. Trả về None nếu thư mục không tồn tại (main dựa vào None để exit 1)."""
     dir_path = Path(directory)
     if not dir_path.exists():
         print(f'Lỗi: thư mục không tồn tại - {directory}')

@@ -457,6 +457,74 @@ func TestSaveReviewRewriteCeiling(t *testing.T) {
 	}
 }
 
+// TestSaveReviewGlobalScopeIgnoresChapterScopeCounter: đã có record chapter-scope
+// (reviews/NN.json) với rewrite_count chạm trần; một review scope=global cùng chương
+// KHÔNG được thừa kế counter đó → không bị ép accept oan, vẫn nâng verdict bình thường.
+func TestSaveReviewGlobalScopeIgnoresChapterScopeCounter(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 10); err != nil {
+		t.Fatalf("Progress.Init: %v", err)
+	}
+	if err := s.Progress.MarkChapterComplete(3, 3000, "", ""); err != nil {
+		t.Fatalf("MarkChapterComplete: %v", err)
+	}
+	// Gieo record CHAPTER-scope đã chạm trần rewrite ở reviews/03.json.
+	if err := s.World.SaveReview(domain.ReviewEntry{
+		Chapter: 3, Scope: "chapter", Verdict: "rewrite", Summary: "chapter đã chạm trần",
+		RewriteCount: maxRewritePerChapter,
+	}); err != nil {
+		t.Fatalf("seed chapter-scope SaveReview: %v", err)
+	}
+
+	tool := NewSaveReviewTool(s)
+	res := execSaveReview(t, tool, map[string]any{
+		"chapter": 3,
+		"scope":   "global",
+		"dimensions": []map[string]any{
+			{"dimension": "consistency", "score": 55, "comment": "lỗi nhất quán xuyên chương"},
+			{"dimension": "character", "score": 82, "comment": "ổn định"},
+			{"dimension": "pacing", "score": 78, "comment": "hơi chậm"},
+			{"dimension": "continuity", "score": 84, "comment": "liền mạch"},
+			{"dimension": "foreshadow", "score": 80, "comment": "bình thường"},
+			{"dimension": "hook", "score": 76, "comment": "móc câu tạm"},
+			{"dimension": "aesthetic", "score": 81, "comment": "văn tạm ổn"},
+		},
+		"issues": []map[string]any{
+			{"type": "consistency", "severity": "critical", "description": "mâu thuẫn xuyên chương", "evidence": "ch1 vs ch3"},
+		},
+		"verdict":           "rewrite",
+		"summary":           "review toàn cục phát hiện lỗi critical",
+		"affected_chapters": []int{3},
+	})
+
+	// Prior đọc từ reviews/03-global.json (không tồn tại) → count=0, KHÔNG bị trần ép accept.
+	if res["final_verdict"] != "rewrite" {
+		t.Fatalf("expected final_verdict=rewrite (global scope không thừa kế counter chapter-scope), got %v", res["final_verdict"])
+	}
+	if res["quality_debt"] == true {
+		t.Fatalf("expected quality_debt=false, global scope không được ép accept oan, got %v", res["quality_debt"])
+	}
+	// Record global ghi ở file riêng, rewrite_count bắt đầu lại từ 1.
+	global, err := s.World.LoadReviewScoped(3, "global")
+	if err != nil || global == nil {
+		t.Fatalf("LoadReviewScoped global: %v", err)
+	}
+	if global.RewriteCount != 1 {
+		t.Fatalf("expected global RewriteCount=1, got %d", global.RewriteCount)
+	}
+	// Record chapter-scope không bị đụng.
+	chScope, err := s.World.LoadReview(3)
+	if err != nil || chScope == nil {
+		t.Fatalf("LoadReview chapter: %v", err)
+	}
+	if chScope.RewriteCount != maxRewritePerChapter {
+		t.Fatalf("expected chapter-scope RewriteCount giữ nguyên %d, got %d", maxRewritePerChapter, chScope.RewriteCount)
+	}
+}
+
 func TestSaveReviewRejectsIssueWithoutEvidence(t *testing.T) {
 	s := store.NewStore(t.TempDir())
 	if err := s.Init(); err != nil {

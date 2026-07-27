@@ -83,7 +83,10 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	// ghi đè mỗi lần review, nên phải đọc TRƯỚC khi SaveReview. Lỗi/thiếu file → coi như lần đầu.
 	var priorRewriteCount int
 	var priorAestheticPolished bool
-	if prior, err := t.store.World.LoadReview(r.Chapter); err == nil && prior != nil {
+	// Đọc prior theo ĐÚNG scope: record global ghi ở reviews/NN-global.json còn chapter/arc
+	// ghi ở reviews/NN.json. Nếu luôn đọc NN.json, review scope=global sẽ thừa kế rewrite_count
+	// của record chapter-scope cùng chương → dễ bị trần ép accept oan.
+	if prior, err := t.store.World.LoadReviewScoped(r.Chapter, r.Scope); err == nil && prior != nil {
 		priorRewriteCount = prior.RewriteCount
 		priorAestheticPolished = prior.AestheticPolished
 	}
@@ -149,6 +152,9 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	// ép về accept thì không tăng (chương không còn quay vòng nữa).
 	r.RewriteCount = priorRewriteCount
 	if finalVerdict == "rewrite" || finalVerdict == "polish" {
+		// polish (kể cả polish vì aesthetic) cũng tiêu 1 slot trong trần maxRewritePerChapter:
+		// có chủ đích — mọi vòng quay lại đều đốt budget nên phải bị đếm chung, không double-jeopardy
+		// (một verdict = tăng đúng 1, không phân biệt rewrite hay polish).
 		r.RewriteCount = priorRewriteCount + 1
 	}
 
