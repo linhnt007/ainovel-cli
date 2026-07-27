@@ -1,6 +1,7 @@
 package host
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -28,6 +29,18 @@ func subagentEndEvent() agentcore.Event {
 
 func commitChapterEndEvent() agentcore.Event {
 	return agentcore.Event{Type: agentcore.EventToolExecEnd, Tool: "commit_chapter"}
+}
+
+// commitChapterResultEvent dựng event commit_chapter kèm Result JSON có "chapter" (và "rewritten" khi cần) —
+// dùng để test tracking per-chương nhận diện đúng chương (review round 1, finding 2), mô phỏng đúng shape
+// JSON thật do commitOutput/domain.CommitResult và executeRewriteCommit trả về.
+func commitChapterResultEvent(chapter int, rewritten bool) agentcore.Event {
+	payload, _ := json.Marshal(struct {
+		Chapter   int  `json:"chapter"`
+		Committed bool `json:"committed"`
+		Rewritten bool `json:"rewritten,omitempty"`
+	}{Chapter: chapter, Committed: true, Rewritten: rewritten})
+	return agentcore.Event{Type: agentcore.EventToolExecEnd, Tool: "commit_chapter", Result: payload}
 }
 
 func TestBudgetSentinelDisabled(t *testing.T) {
@@ -165,6 +178,9 @@ func TestBudgetSentinelPerChapterWarnOnce(t *testing.T) {
 	s := r.sentinel(bootstrap.BudgetConfig{BookUSD: 1000, WarnRatio: 0.8})
 
 	// 4 chương đầu, mỗi chương tốn đúng 1.0 (tích lũy 1,2,3,4) — đây là baseline, không nên cảnh báo.
+	// (Chương đầu tiên trong số này bị loại khỏi chapterCosts theo finding 1 — xem
+	// TestBudgetSentinelPerChapterFirstCommitExcludedFromBaseline — nhưng vì 3 chương còn lại đã đủ
+	// minChapterBaseline nên bài test này không bị ảnh hưởng.)
 	for i := 1; i <= 4; i++ {
 		r.cost = float64(i)
 		s.HandleEvent(commitChapterEndEvent())
@@ -207,6 +223,107 @@ func TestBudgetSentinelPerChapterNoBaselineNoWarn(t *testing.T) {
 
 	if len(r.reports) != 0 {
 		t.Fatalf("less than minChapterBaseline chapters should not warn even with a big deviation, got %v", r.reports)
+	}
+}
+
+// TestBudgetSentinelPerChapterFirstCommitExcludedFromBaseline kiểm tra finding 1 (review round 1): delta của
+// lần commit_chapter đầu tiên gồm cả chi phí pha kiến trúc/nền móng chạy trước đó cùng phiên, không đại diện
+// cho "chi phí một chương" — phải bị loại khỏi chapterCosts, chỉ dùng để đặt mốc.
+//
+// Chứng minh bằng phản chứng: chương 1 tốn 20.0 (giả lập cả pha setup dồn vào), chương 2-4 tốn 1.0/chương,
+// chương 5 tốn 4.0 (spike thật, gấp 4x mức bình thường 1.0). Nếu chương 1 KHÔNG bị loại, trung bình 4 chương
+// đầu sẽ là (20+1+1+1)/4=5.75 và spike 4.0 sẽ KHÔNG vượt quá 3x mức đó (17.25) → false negative, spike bị
+// che khuất đúng như finding 1 cảnh báo. Với fix, chương 1 bị loại nên baseline chỉ còn (1,1,1), trung bình
+// 1.0, spike 4.0 vượt hẳn 3x → phải cảnh báo.
+func TestBudgetSentinelPerChapterFirstCommitExcludedFromBaseline(t *testing.T) {
+	r := &budgetRecorder{}
+	s := r.sentinel(bootstrap.BudgetConfig{BookUSD: 1000, WarnRatio: 0.8})
+
+	r.cost = 20 // chương 1: 20.0 (bao gồm cả pha kiến trúc/nền móng trước đó) — chỉ đặt mốc, không vào baseline
+	s.HandleEvent(commitChapterEndEvent())
+	r.cost = 21 // chương 2: 1.0
+	s.HandleEvent(commitChapterEndEvent())
+	r.cost = 22 // chương 3: 1.0
+	s.HandleEvent(commitChapterEndEvent())
+	r.cost = 23 // chương 4: 1.0 — baseline (1,1,1) đã đủ minChapterBaseline=3, không tính chương 1 phình vào
+	s.HandleEvent(commitChapterEndEvent())
+	if len(r.reports) != 0 {
+		t.Fatalf("chapters before the spike should not warn, got %v", r.reports)
+	}
+
+	r.cost = 27 // chương 5: 4.0 — gấp 4x trung bình 1.0 sạch (không bị chương 1 kéo lệch) -> phải cảnh báo
+	s.HandleEvent(commitChapterEndEvent())
+	if len(r.reports) != 1 {
+		t.Fatalf("expected the real spike to be detected once baseline excludes the first (contaminated) commit, got %v", r.reports)
+	}
+	if !strings.Contains(r.reports[0], "$4.00") || !strings.Contains(r.reports[0], "$1.00") {
+		t.Fatalf("warning should contain chapter cost vs clean average figures, got %v", r.reports[0])
+	}
+}
+
+// TestBudgetSentinelPerChapterRetryDoesNotInflateBaseline kiểm tra finding 2 (review round 1): commit_chapter
+// là idempotent/retriable, gọi lại cùng một chương (không phải rewrite thật) không được tính là "chương mới"
+// — nếu không lọc, entry chi phí thấp giả của lần gọi lại sẽ làm baseline đạt ngưỡng minChapterBaseline sớm
+// hơn thực tế và làm lệch trung bình.
+//
+// Chứng minh bằng phản chứng: chỉ có 2 chương thật (2, 3) trước khi chương 4 tốn 100.0 (spike rất lớn). Xen
+// giữa là một lần gọi lại chương 2 (idempotent skip, "rewritten" vắng mặt) với chi phí nhỏ giả 0.01. Nếu lần
+// gọi lại này bị tính là "chương mới" thì baseline sẽ có 3 entry (1.0, 0.01, 1.0) ngay trước chương 4, đủ
+// minChapterBaseline=3 → sẽ cảnh báo (dùng trung bình đã bị lệch bởi entry giả ~0.67). Với fix, lần gọi lại
+// bị bỏ qua hoàn toàn nên baseline mới chỉ có 2 entry thật (1.0, 1.0) — chưa đủ 3 — nên KHÔNG cảnh báo ở
+// chương 4, dù chi phí spike rất lớn.
+func TestBudgetSentinelPerChapterRetryDoesNotInflateBaseline(t *testing.T) {
+	r := &budgetRecorder{}
+	s := r.sentinel(bootstrap.BudgetConfig{BookUSD: 1000, WarnRatio: 0.8})
+
+	r.cost = 1 // chương 1: đặt mốc (finding 1 exclusion), không vào baseline
+	s.HandleEvent(commitChapterResultEvent(1, false))
+	r.cost = 2 // chương 2 thật: 1.0 -> baseline entry #1
+	s.HandleEvent(commitChapterResultEvent(2, false))
+	r.cost = 2.01 // retry idempotent của chương 2 (buildSkipResult): chi phí giả nhỏ 0.01, không phải rewrite
+	s.HandleEvent(commitChapterResultEvent(2, false))
+	r.cost = 3.01 // chương 3 thật: 1.0 -> baseline entry #2 (nếu retry không bị lọc thì đây đã là entry #3)
+	s.HandleEvent(commitChapterResultEvent(3, false))
+	if len(r.reports) != 0 {
+		t.Fatalf("no warning expected before the spike, got %v", r.reports)
+	}
+
+	r.cost = 103.01 // chương 4: spike 100.0 — baseline thật chỉ có 2 entry (chưa đủ 3) nên không được cảnh báo
+	s.HandleEvent(commitChapterResultEvent(4, false))
+	if len(r.reports) != 0 {
+		t.Fatalf("retry must not count toward baseline — spike should stay silent until 3 real chapters exist, got %v", r.reports)
+	}
+}
+
+// TestBudgetSentinelPerChapterRewriteOfSameChapterStillCounted kiểm tra vế còn lại của finding 2: dedup theo
+// số chương KHÔNG được lọc nhầm rewrite thật. Viết lại một chương đã hoàn thành (executeRewriteCommit, có
+// "rewritten":true) là chính kịch bản "rewrite loop" mà Part J muốn phát hiện — dù trùng số chương với lần
+// commit trước, vẫn phải được tính vào baseline/cảnh báo như một chương bình thường.
+func TestBudgetSentinelPerChapterRewriteOfSameChapterStillCounted(t *testing.T) {
+	r := &budgetRecorder{}
+	s := r.sentinel(bootstrap.BudgetConfig{BookUSD: 1000, WarnRatio: 0.8})
+
+	r.cost = 1 // chương 1: đặt mốc (finding 1 exclusion)
+	s.HandleEvent(commitChapterResultEvent(1, false))
+	r.cost = 2 // chương 2: 1.0 -> baseline entry #1
+	s.HandleEvent(commitChapterResultEvent(2, false))
+	r.cost = 3 // chương 3: 1.0 -> baseline entry #2
+	s.HandleEvent(commitChapterResultEvent(3, false))
+	r.cost = 4 // chương 4: 1.0 -> baseline entry #3, đủ minChapterBaseline
+	s.HandleEvent(commitChapterResultEvent(4, false))
+	if len(r.reports) != 0 {
+		t.Fatalf("baseline chapters should not warn, got %v", r.reports)
+	}
+
+	// Viết lại chương 4 (cùng số chương với lần commit ngay trước) với chi phí lớn: phải được tính là một
+	// lần commit mới (không bị dedup bỏ qua như retry) và so với baseline sạch (1,1,1) -> vượt 3x -> cảnh báo.
+	r.cost = 14 // rewrite chương 4: 10.0, gấp 10x trung bình 1.0
+	s.HandleEvent(commitChapterResultEvent(4, true))
+	if len(r.reports) != 1 {
+		t.Fatalf("a real rewrite of the same chapter must still be tracked and warn, got %v", r.reports)
+	}
+	if !strings.Contains(r.reports[0], "$10.00") || !strings.Contains(r.reports[0], "$1.00") {
+		t.Fatalf("warning should contain chapter cost vs average figures, got %v", r.reports[0])
 	}
 }
 

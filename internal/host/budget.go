@@ -1,6 +1,7 @@
 package host
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sync"
@@ -57,9 +58,23 @@ type BudgetSentinel struct {
 	// Dùng mutex thay vì atomic vì thao tác (tính trung bình, trượt cửa sổ) không biểu diễn được bằng một CAS.
 	// Lưu ý: giống mọi state khác của Sentinel, không phục hồi qua Host instance mới — mốc bắt đầu lại từ 0
 	// (nhất quán với triết lý "tăng ngân sách = tái ủy quyền, không hoàn trạng thái" đã ghi ở đầu file).
+	//
+	// haveCommitted đánh dấu đã xử lý ít nhất một commit_chapter (review round 1, finding 1): delta của lần
+	// commit_chapter ĐẦU TIÊN trong đời Sentinel gồm cả chi phí pha kiến trúc/nền móng chạy trước đó cùng
+	// phiên (save_foundation, append_volume...), không đại diện cho "chi phí một chương" — chỉ dùng để đặt
+	// mốc, không đưa vào chapterCosts, tránh làm bẩn baseline ngay từ đầu sách.
+	//
+	// lastChapter ghi số chương (parse từ Result JSON của commit_chapter, field "chapter") của lần xử lý gần
+	// nhất, dùng để lọc trùng lặp (review round 1, finding 2): commit_chapter là idempotent/retriable — gọi
+	// lại một chương đã hoàn thành và không nằm trong PendingRewrites sẽ rơi vào buildSkipResult (gần như
+	// free, không có field "rewritten"), không nên tính là "chương mới". Không được lọc mù theo số chương:
+	// viết lại thật (executeRewriteCommit — đúng kịch bản rewrite loop mà Part J muốn bắt) cũng commit lại
+	// cùng số chương nhưng có "rewritten":true và chi phí thật, vẫn phải được tính.
 	chapterMu        sync.Mutex
 	costAtLastCommit float64
 	chapterCosts     []float64
+	haveCommitted    bool
+	lastChapter      int
 }
 
 // blindZeroStreak là số lần ghi phí tăng bằng 0 liên tiếp trước khi cảnh báo. Mô hình tính phí bình thường
@@ -130,7 +145,7 @@ func (s *BudgetSentinel) HandleEvent(ev agentcore.Event) {
 		return
 	}
 	if ev.Type == agentcore.EventToolExecEnd && ev.Tool == "commit_chapter" {
-		s.onChapterCommit()
+		s.onChapterCommit(ev.Result)
 	}
 	if ev.Type != agentcore.EventToolExecEnd || ev.Tool != "subagent" {
 		return
@@ -144,8 +159,20 @@ func (s *BudgetSentinel) HandleEvent(ev agentcore.Event) {
 // onChapterCommit tính chi phí chương vừa hoàn tất (delta so với mốc commit_chapter trước) và so với trung
 // bình trượt các chương gần đây; vượt quá perChapterWarnFactor lần thì cảnh báo — CHỈ cảnh báo, không dừng,
 // không chặn, quyết định thuộc về người dùng (brief Part J).
-func (s *BudgetSentinel) onChapterCommit() {
+//
+// result là Event.Result (JSON trả về của tool commit_chapter, xem commitOutput/domain.CommitResult tại
+// internal/tools/commit_chapter.go) — dùng để đọc field "chapter" (nhận diện chương, finding 2) và "rewritten"
+// (chỉ có ở nhánh executeRewriteCommit, phân biệt viết lại thật với skip idempotent cùng số chương).
+func (s *BudgetSentinel) onChapterCommit(result json.RawMessage) {
 	total := s.costNow()
+
+	var parsed struct {
+		Chapter   int  `json:"chapter"`
+		Rewritten bool `json:"rewritten"`
+	}
+	// Best-effort: Result rỗng hoặc parse lỗi thì Chapter=0 — coi như không xác định được số chương, fail-open
+	// (xử lý như một chương mới bình thường) thay vì âm thầm bỏ qua cảnh báo về sau.
+	_ = json.Unmarshal(result, &parsed)
 
 	s.chapterMu.Lock()
 	defer s.chapterMu.Unlock()
@@ -155,6 +182,27 @@ func (s *BudgetSentinel) onChapterCommit() {
 	if chapterCost < 0 {
 		// Phòng vệ: total tích lũy theo thiết kế không giảm; nếu costNow bị stub/reset (test, hoặc phục hồi
 		// state lạ) thì bỏ qua thay vì báo cảnh sai với số âm.
+		return
+	}
+
+	// Finding 2: lọc trùng lặp theo số chương. commit_chapter idempotent/retriable — gọi lại một chương đã
+	// hoàn thành (không phải rewrite) rơi vào buildSkipResult, cùng "chapter" nhưng không làm việc thật; entry
+	// chi phí thấp giả của nó sẽ làm phình count/lệch trung bình nếu tính vào baseline. Không loại trừ khi có
+	// "rewritten":true — đó là rewrite loop thật, đúng thứ Part J muốn bắt.
+	isDuplicate := parsed.Chapter != 0 && parsed.Chapter == s.lastChapter && !parsed.Rewritten
+	if parsed.Chapter != 0 {
+		s.lastChapter = parsed.Chapter
+	}
+	if isDuplicate {
+		return
+	}
+
+	// Finding 1: lần commit_chapter đầu tiên trong đời Sentinel không đại diện cho chi phí một chương (gồm cả
+	// pha kiến trúc/nền móng chạy trước writer trong cùng phiên) — chỉ set mốc phía trên, không đưa vào
+	// chapterCosts. Mất 1 điểm dữ liệu chương đầu, đổi lại baseline sạch ngay từ đầu sách.
+	firstCommit := !s.haveCommitted
+	s.haveCommitted = true
+	if firstCommit {
 		return
 	}
 
