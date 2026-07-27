@@ -26,6 +26,10 @@ func subagentEndEvent() agentcore.Event {
 	return agentcore.Event{Type: agentcore.EventToolExecEnd, Tool: "subagent"}
 }
 
+func commitChapterEndEvent() agentcore.Event {
+	return agentcore.Event{Type: agentcore.EventToolExecEnd, Tool: "commit_chapter"}
+}
+
 func TestBudgetSentinelDisabled(t *testing.T) {
 	r := &budgetRecorder{}
 	if s := r.sentinel(bootstrap.BudgetConfig{}); s != nil {
@@ -151,6 +155,58 @@ func TestBudgetSentinelZeroCostBlindWarning(t *testing.T) {
 		if strings.Contains(strings.ToLower(rep), "vùng mù") {
 			t.Fatalf("priced model should not trigger blind warning: %v", r2.reports)
 		}
+	}
+}
+
+// TestBudgetSentinelPerChapterWarnOnce kiểm tra acceptance Part J: 4 chương baseline cost 1.0, chương 5
+// tốn 4.0 (gấp 4x, vượt perChapterWarnFactor=3) → cảnh báo đúng một lần kèm số liệu USD.
+func TestBudgetSentinelPerChapterWarnOnce(t *testing.T) {
+	r := &budgetRecorder{}
+	s := r.sentinel(bootstrap.BudgetConfig{BookUSD: 1000, WarnRatio: 0.8})
+
+	// 4 chương đầu, mỗi chương tốn đúng 1.0 (tích lũy 1,2,3,4) — đây là baseline, không nên cảnh báo.
+	for i := 1; i <= 4; i++ {
+		r.cost = float64(i)
+		s.HandleEvent(commitChapterEndEvent())
+	}
+	if len(r.reports) != 0 {
+		t.Fatalf("baseline chapters should not warn, got %v", r.reports)
+	}
+
+	// Chương 5 tốn 4.0 (tích lũy 4 -> 8), gấp 4x trung bình 1.0/chương -> cảnh báo đúng 1 lần kèm số liệu.
+	r.cost = 8
+	s.HandleEvent(commitChapterEndEvent())
+	if len(r.reports) != 1 {
+		t.Fatalf("expected exactly one per-chapter warning, got %v", r.reports)
+	}
+	if !strings.Contains(r.reports[0], "$4.00") || !strings.Contains(r.reports[0], "$1.00") {
+		t.Fatalf("warning should contain chapter cost vs average figures, got %v", r.reports[0])
+	}
+
+	// Chương kế tiếp lại tốn 1.0 bình thường -> không cảnh báo thêm, tổng số warning vẫn là 1.
+	r.cost = 9
+	s.HandleEvent(commitChapterEndEvent())
+	if len(r.reports) != 1 {
+		t.Fatalf("normal chapter after the spike should not add another warning, got %v", r.reports)
+	}
+}
+
+// TestBudgetSentinelPerChapterNoBaselineNoWarn kiểm tra: chưa đủ minChapterBaseline (3) chương làm baseline
+// thì dù chương lệch mạnh so với các chương trước đó cũng không cảnh báo.
+func TestBudgetSentinelPerChapterNoBaselineNoWarn(t *testing.T) {
+	r := &budgetRecorder{}
+	s := r.sentinel(bootstrap.BudgetConfig{BookUSD: 1000, WarnRatio: 0.8})
+
+	// Chỉ 2 chương baseline (1.0, 1.0), chương 3 tốn 10.0 (lệch rất mạnh) — nhưng baseline chưa đủ 3 nên im lặng.
+	r.cost = 1
+	s.HandleEvent(commitChapterEndEvent())
+	r.cost = 2
+	s.HandleEvent(commitChapterEndEvent())
+	r.cost = 12
+	s.HandleEvent(commitChapterEndEvent())
+
+	if len(r.reports) != 0 {
+		t.Fatalf("less than minChapterBaseline chapters should not warn even with a big deviation, got %v", r.reports)
 	}
 }
 

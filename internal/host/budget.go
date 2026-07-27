@@ -3,6 +3,7 @@ package host
 import (
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 
 	"github.com/voocel/agentcore"
@@ -48,12 +49,37 @@ type BudgetSentinel struct {
 	lastTotal   atomic.Uint64 // math.Float64bits(chi phí tích lũy lần callback trước)
 	zeroStreak  atomic.Int32
 	blindWarned atomic.Bool
+
+	// Phát hiện "chương bệnh" (Part J): book_usd tích lũy chỉ cảnh báo ở quy mô toàn sách, một chương bất
+	// thường (rewrite loop, draft khổng lồ) có thể ngốn phần lớn ngân sách mà không có tín hiệu cục bộ nào.
+	// costAtLastCommit là mốc chi phí tại lần commit_chapter gần nhất; delta so với mốc = chi phí chương vừa
+	// xong. chapterCosts giữ tối đa chapterAvgWindow chi phí chương gần nhất để làm trung bình trượt so sánh.
+	// Dùng mutex thay vì atomic vì thao tác (tính trung bình, trượt cửa sổ) không biểu diễn được bằng một CAS.
+	// Lưu ý: giống mọi state khác của Sentinel, không phục hồi qua Host instance mới — mốc bắt đầu lại từ 0
+	// (nhất quán với triết lý "tăng ngân sách = tái ủy quyền, không hoàn trạng thái" đã ghi ở đầu file).
+	chapterMu        sync.Mutex
+	costAtLastCommit float64
+	chapterCosts     []float64
 }
 
 // blindZeroStreak là số lần ghi phí tăng bằng 0 liên tiếp trước khi cảnh báo. Mô hình tính phí bình thường
 // mỗi lần tăng phải > 0 (cost là float tích lũy không làm tròn), lấy 5 chỉ để tránh nhiễu cực đoan,
 // không phải ngưỡng có thể điều chỉnh theo chính sách.
 const blindZeroStreak = 5
+
+// perChapterWarnFactor: chương vừa hoàn thành tốn gấp hơn factor lần trung bình các chương gần đây mới
+// đáng nói — chọn 3 vì biến động tự nhiên giữa các chương (cao trào dài hơn, nhiều thoại hơn...) thường
+// không vượt quá 2-3x, còn rewrite loop/draft phình thường lệch rất xa (chục lần). Có thể false-positive ở
+// chương cao trào dài nhưng chấp nhận được vì đây chỉ là cảnh báo, không dừng/chặn (brief Part J).
+const perChapterWarnFactor = 3
+
+// chapterAvgWindow: số chương gần nhất dùng để tính trung bình trượt — đủ để phản ánh "gần đây" mà không bị
+// một chương đột biến kéo lệch trung bình quá lâu về sau.
+const chapterAvgWindow = 5
+
+// minChapterBaseline: cần tối thiểu bấy nhiêu chương đã hoàn thành làm baseline trước khi so sánh; ít hơn thì
+// trung bình chưa đủ tin cậy để kết luận chương hiện tại là bất thường (brief: "≥ 3 chương làm baseline").
+const minChapterBaseline = 3
 
 // NewBudgetSentinel tạo BudgetSentinel; trả về nil khi chính sách chưa được bật (tất cả method đều an toàn với nil).
 func NewBudgetSentinel(cfg bootstrap.BudgetConfig, costNow func() float64, abort func(reason string), report func(level, summary string)) *BudgetSentinel {
@@ -96,11 +122,15 @@ func (s *BudgetSentinel) OnCost(total float64) {
 	}
 }
 
-// HandleEvent thực thi lệnh dừng đang chờ tại ranh giới agent phụ. Phải đăng ký trước Dispatcher.
-// Không bỏ qua IsError — lỗi trả về cũng là ranh giới, không nên trì hoãn dừng vì agent phụ thất bại.
+// HandleEvent thực thi lệnh dừng đang chờ tại ranh giới agent phụ, và cập nhật tracking chi phí per-chương.
+// Phải đăng ký trước Dispatcher. Không bỏ qua IsError — lỗi trả về cũng là ranh giới, không nên trì hoãn
+// dừng vì agent phụ thất bại (và với commit_chapter, chi phí đã phát sinh dù tool có lỗi hay không).
 func (s *BudgetSentinel) HandleEvent(ev agentcore.Event) {
 	if s == nil {
 		return
+	}
+	if ev.Type == agentcore.EventToolExecEnd && ev.Tool == "commit_chapter" {
+		s.onChapterCommit()
 	}
 	if ev.Type != agentcore.EventToolExecEnd || ev.Tool != "subagent" {
 		return
@@ -109,6 +139,48 @@ func (s *BudgetSentinel) HandleEvent(ev agentcore.Event) {
 		return
 	}
 	s.stop(s.costNow())
+}
+
+// onChapterCommit tính chi phí chương vừa hoàn tất (delta so với mốc commit_chapter trước) và so với trung
+// bình trượt các chương gần đây; vượt quá perChapterWarnFactor lần thì cảnh báo — CHỈ cảnh báo, không dừng,
+// không chặn, quyết định thuộc về người dùng (brief Part J).
+func (s *BudgetSentinel) onChapterCommit() {
+	total := s.costNow()
+
+	s.chapterMu.Lock()
+	defer s.chapterMu.Unlock()
+
+	chapterCost := total - s.costAtLastCommit
+	s.costAtLastCommit = total
+	if chapterCost < 0 {
+		// Phòng vệ: total tích lũy theo thiết kế không giảm; nếu costNow bị stub/reset (test, hoặc phục hồi
+		// state lạ) thì bỏ qua thay vì báo cảnh sai với số âm.
+		return
+	}
+
+	if len(s.chapterCosts) >= minChapterBaseline {
+		avg := average(s.chapterCosts)
+		if avg > 0 && chapterCost > perChapterWarnFactor*avg {
+			s.report("warn", fmt.Sprintf("Chương bất thường: chương vừa hoàn thành tốn $%.2f, gấp hơn %dx trung bình $%.2f/chương (tính trên %d chương gần nhất)", chapterCost, perChapterWarnFactor, avg, len(s.chapterCosts)))
+		}
+	}
+
+	s.chapterCosts = append(s.chapterCosts, chapterCost)
+	if len(s.chapterCosts) > chapterAvgWindow {
+		s.chapterCosts = s.chapterCosts[len(s.chapterCosts)-chapterAvgWindow:]
+	}
+}
+
+// average trả về trung bình cộng của xs; 0 nếu rỗng.
+func average(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, x := range xs {
+		sum += x
+	}
+	return sum / float64(len(xs))
 }
 
 func (s *BudgetSentinel) stop(total float64) {
