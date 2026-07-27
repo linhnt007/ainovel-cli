@@ -146,7 +146,7 @@ func Route(s State) *Instruction {
 		from := to - domain.ReviewInterval + 1
 		return &Instruction{
 			Agent:  "editor",
-			Task:   fmt.Sprintf("Đánh giá batch chương %d-%d (scope=batch)", from, to),
+			Task:   fmt.Sprintf("Đánh giá batch chương %d-%d (scope=global)", from, to),
 			Reason: "Review định kỳ chưa hoàn thành",
 		}
 	}

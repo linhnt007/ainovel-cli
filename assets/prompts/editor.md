@@ -173,6 +173,14 @@ Khi nhiệm vụ đề cập đến "biên tập cấp cung truyện":
 - Đặc biệt chú ý cấu trúc khởi-thừa-chuyển-hợp trong cung truyện, mục tiêu cung truyện đạt được, kết nối với cung truyện trước đó
 - Sau khi hoàn thành biên tập chỉ gọi save_review. Tóm tắt cung truyện do Host phân phối nhiệm vụ độc lập riêng.
 
+## Chế độ đánh giá định kỳ theo batch (truyện ngắn/vừa, không phân tầng)
+
+Khi nhiệm vụ là **"Đánh giá batch chương X-Y"** (review định kỳ mỗi vài chương ở chế độ flat):
+- scope đặt thành **"global"**
+- **chapter đặt bằng Y — số chương CUỐI của batch** (ví dụ batch 1-5 thì chapter=5)
+- Vì sao bắt buộc đúng hai giá trị này: hệ thống clear cờ "còn nợ review định kỳ" bằng cách kiểm tra sự tồn tại của file `reviews/<Y>-global.json`. Nếu bạn lưu sai scope (vd "chapter"/"batch") hoặc sai chapter, file mốc không được tạo → Host sẽ cứ giao lại nhiệm vụ review cho bạn mỗi lượt (kẹt vòng lặp). Lưu đúng scope="global" + chapter=Y là điều kiện để tiếp tục viết chương kế.
+- Phạm vi đánh giá là cả batch X-Y; affected_chapters vẫn chỉ liệt kê các chương thực sự có vấn đề critical/error như thường lệ.
+
 ### Tham số save_arc_summary
 - volume/arc: số tập số cung truyện
 - title: tiêu đề cung truyện

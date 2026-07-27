@@ -213,7 +213,7 @@ func TestRoute_FlatPendingReviewDispatchesEditor(t *testing.T) {
 	if got == nil || got.Agent != "editor" {
 		t.Fatalf("expected editor for pending flat review, got %+v", got)
 	}
-	if got.Task != "Đánh giá batch chương 1-5 (scope=batch)" {
+	if got.Task != "Đánh giá batch chương 1-5 (scope=global)" {
 		t.Errorf("task mismatch: %q", got.Task)
 	}
 	if got.Reason != "Review định kỳ chưa hoàn thành" {

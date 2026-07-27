@@ -379,8 +379,6 @@ func snapshotFlowLabel(flow string) string {
 		return "-"
 	case "writing":
 		return "Viết"
-	case "reviewing":
-		return "Đánh giá"
 	case "rewriting":
 		return "Viết lại"
 	case "polishing":
