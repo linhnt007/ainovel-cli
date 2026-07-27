@@ -106,6 +106,19 @@ func BuildCoCreateMessages(sysPrompt, draftPrompt string, history []CoCreateMess
 	if len(history) > coCreateHistoryWindow {
 		history = history[len(history)-coCreateHistoryWindow:]
 	}
+	// Invariant provider "user-first": với provider kiểu Anthropic, system là field riêng và message ĐẦU TIÊN
+	// bắt buộc role=user; nếu mở đầu bằng assistant → provider trả 400. History luôn LẺ khi gửi (history[0]=user,
+	// xen kẽ user/assistant, gửi ngay sau AppendUser), nên cửa sổ CHẴN K=8 cắt tại history[len-8] rơi vào chỉ số
+	// LẺ = assistant từ độ dài 9,11,13… agentcore ở đường GenerateStream KHÔNG tự chuẩn hoá thứ tự này (chỉ bỏ
+	// assistant rỗng/reasoning-only). Vì vậy tự bỏ các message assistant/rỗng ở đầu cửa sổ cho tới message user
+	// đầu tiên (cửa sổ thực tế co còn 7 lượt ở trường hợp này — chấp nhận được, đổi lấy chuỗi hợp lệ).
+	for len(history) > 0 {
+		role := strings.ToLower(strings.TrimSpace(history[0].Role))
+		if strings.TrimSpace(history[0].Content) != "" && role != "assistant" {
+			break
+		}
+		history = history[1:]
+	}
 	for _, item := range history {
 		content := strings.TrimSpace(item.Content)
 		if content == "" {

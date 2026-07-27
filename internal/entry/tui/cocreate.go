@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,16 +131,23 @@ func saveCoCreateSession(dir string, state *cocreateState) {
 	if path == "" {
 		return
 	}
-	_ = state.session.Save(path)
+	// Best-effort: lỗi ghi không được làm hỏng flow đồng sáng tác, nhưng vẫn log debug (tui.log) để chẩn đoán
+	// "tại sao khôi phục phiên không hoạt động".
+	if err := state.session.Save(path); err != nil {
+		slog.Debug("cocreate session save failed", "path", path, "err", err)
+	}
 }
 
-// removeCoCreateSession xóa file phiên (khi StartPrepared thành công hoặc user làm mới). Bỏ qua lỗi không-tồn-tại.
+// removeCoCreateSession xóa file phiên (khi StartPrepared thành công hoặc user làm mới).
+// Bỏ qua lỗi không-tồn-tại (file chưa từng được ghi); các lỗi khác log debug để chẩn đoán.
 func removeCoCreateSession(dir string) {
 	path := coCreateSessionPath(dir)
 	if path == "" {
 		return
 	}
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Debug("cocreate session remove failed", "path", path, "err", err)
+	}
 }
 
 // restoreCoCreateState thử khôi phục phiên cold-start đã lưu; trả về nil nếu không có file / hỏng / rỗng.

@@ -128,6 +128,38 @@ func TestBuildCoCreateMessages_WindowAndPin(t *testing.T) {
 	}
 }
 
+// TestBuildCoCreateMessages_OddHistoryUserFirst: history độ dài LẺ (13) — cửa sổ chẵn 8 cắt tại chỉ số lẻ = assistant.
+// Phải đảm bảo message đầu sau system là USER (invariant provider Anthropic), cửa sổ co còn 7, tổng message = 8.
+func TestBuildCoCreateMessages_OddHistoryUserFirst(t *testing.T) {
+	var hist []host.CoCreateMessage
+	for i := 0; i < 13; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		hist = append(hist, host.CoCreateMessage{Role: role, Content: "noi dung luot " + string(rune('A'+i))})
+	}
+
+	msgs := host.BuildCoCreateMessages("SYSTEM_BASE", "## draft", hist)
+
+	// last 8 = index 5..12; index 5 là assistant → bị bỏ; còn index 6..12 (user đầu) = 7 message.
+	if len(msgs) != 8 {
+		t.Fatalf("msgs phải = system + 7 (bỏ assistant mở đầu cửa sổ) = 8, có %d", len(msgs))
+	}
+	if msgs[0].Role != agentcore.RoleSystem {
+		t.Fatalf("msg[0] phải là system, là %q", msgs[0].Role)
+	}
+	if msgs[1].Role != agentcore.RoleUser {
+		t.Errorf("message ĐẦU sau system PHẢI là user (invariant provider), là %q", msgs[1].Role)
+	}
+	if got := msgs[1].TextContent(); got != hist[6].Content {
+		t.Errorf("msg[1] phải là history[6] (%q), có %q", hist[6].Content, got)
+	}
+	if got := msgs[7].TextContent(); got != hist[12].Content {
+		t.Errorf("msg[7] phải là history[12] (%q), có %q", hist[12].Content, got)
+	}
+}
+
 // TestBuildCoCreateMessages_NoDraftNoPin: draft rỗng → không thêm mục ghim, system giữ nguyên.
 func TestBuildCoCreateMessages_NoDraftNoPin(t *testing.T) {
 	msgs := host.BuildCoCreateMessages("SYSTEM_BASE", "  ", []host.CoCreateMessage{{Role: "user", Content: "xin chào"}})
