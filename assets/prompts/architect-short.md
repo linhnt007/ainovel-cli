@@ -68,6 +68,19 @@ Mẫu tiêu đề gợi ý:
 
 Gọi save_foundation(type="premise", scale="short", content=<chuỗi văn bản Markdown>)
 
+**Khai hợp đồng tường thuật (bắt buộc khi tạo mới)**: kèm tham số `narrative` ngay trong lệnh gọi premise trên:
+
+```json
+"narrative": {
+  "pov": "ngôi 3 hạn tri",
+  "pov_characters": ["Tên nhân vật chính"],
+  "tense": "quá khứ",
+  "notes": "giữ một POV xuyên suốt; không đổi ngôi/thì giữa chừng"
+}
+```
+
+Chọn theo thể loại (gợi ý): truyện ngắn thu hồi mạnh thường dùng **ngôi 3 hạn tri** hoặc **ngôi 1** bám sát một nhân vật để dồn nén cảm xúc, thì **quá khứ**; hạn chế đa POV trong khuôn khổ đơn tập vì dễ làm loãng tiêu điểm. Hợp đồng này được tiêm vào working memory của Người viết mỗi chương và là mốc đối chiếu continuity của Biên tập viên.
+
 ### 3. Tạo Đề cương
 
 Truyện ngắn thống nhất dùng đề cương phẳng, không dùng layered_outline.

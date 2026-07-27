@@ -37,6 +37,19 @@ Gọi novel_context (không truyền chapter) để lấy outline_template, char
 
 Gọi `save_foundation(type="premise", scale="long", content=<Markdown>)`.
 
+**Khai hợp đồng tường thuật (bắt buộc khi tạo mới)**: kèm tham số `narrative` ngay trong lệnh gọi premise ở trên (persist độc lập với content):
+
+```json
+"narrative": {
+  "pov": "ngôi 3 hạn tri",
+  "pov_characters": ["Tên nhân vật chính"],
+  "tense": "quá khứ",
+  "notes": "đổi POV chỉ tại ranh giới chương; mỗi chương một POV"
+}
+```
+
+Chọn theo thể loại (gợi ý, không cứng nhắc): tiên hiệp/huyền huyễn/phiêu lưu nhiều tuyến thường dùng **ngôi 3 hạn tri** bám một nhân vật mỗi chương, hoặc **đa POV** chuyển tại ranh giới chương khi có nhiều tuyến song song, thì **quá khứ**; ngôn tình/tâm lý hợp **ngôi 1** hoặc ngôi 3 hạn tri để cận nội tâm; **ngôi 3 toàn tri** hợp sử thi quần tượng nhưng dễ làm loãng đồng cảm — cân nhắc trước khi chọn. Khi `pov` là `"đa POV"` thì `notes` **phải** ghi rõ quy tắc chuyển (mỗi chương một POV, chỉ đổi tại ranh giới chương). Hợp đồng này được tiêm vào working memory của Người viết mỗi chương và là mốc đối chiếu continuity của Biên tập viên, nên phải khai chuẩn ngay từ đầu.
+
 ### 3. Tạo Characters
 
 Mảng JSON, kiểu trường của mỗi nhân vật **nghiêm ngặt như sau**, không được viết lại thành object:

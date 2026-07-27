@@ -46,6 +46,25 @@ type StoryCompass struct {
 	LastUpdated     int      `json:"last_updated,omitempty"`    // số chương đã hoàn thành tại thời điểm cập nhật
 }
 
+// NarrativeContract là hợp đồng tường thuật của toàn tác phẩm: chuẩn ngôi kể / thì / nhân vật POV.
+// Vì sao cần: không tầng nào trong hệ đặt chuẩn ngôi kể, model tự chọn ngẫu nhiên ở chương 1 rồi dễ trôi
+// giữa sách mà biên tập không có mốc để so. Khai một lần tại foundation, tiêm vào working memory mỗi chương
+// làm chuẩn cứng cho Người viết và mốc đối chiếu cho Biên tập viên.
+//
+// Optional — foundation cũ thiếu trường này thì mọi tầng bỏ qua êm (xem IsEmpty), hành vi cũ nguyên vẹn
+// (không ràng buộc POV/thì).
+type NarrativeContract struct {
+	POV           string   `json:"pov,omitempty"`            // ngôi kể: "ngôi 1" / "ngôi 3 hạn tri" / "ngôi 3 toàn tri" / "đa POV"
+	POVCharacters []string `json:"pov_characters,omitempty"` // nhân vật giữ POV (ngôi 1 hoặc ngôi 3 hạn tri)
+	Tense         string   `json:"tense,omitempty"`          // thì trần thuật: "quá khứ" / "hiện tại"
+	Notes         string   `json:"notes,omitempty"`          // quy tắc chuyển POV, ví dụ "đổi POV chỉ tại ranh giới chương; mỗi chương 1 POV"
+}
+
+// IsEmpty báo hợp đồng chưa được khai (foundation cũ, hoặc con trỏ nil). Dùng để mọi tầng bỏ qua êm.
+func (n *NarrativeContract) IsEmpty() bool {
+	return n == nil || (n.POV == "" && len(n.POVCharacters) == 0 && n.Tense == "" && n.Notes == "")
+}
+
 // ArcOutline là đề cương cấp cung truyện.
 type ArcOutline struct {
 	Index             int            `json:"index"` // số thứ tự cung truyện trong tập

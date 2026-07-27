@@ -408,6 +408,81 @@ func TestSaveFoundationAcceptsDirectJSONArrayContent(t *testing.T) {
 	}
 }
 
+// TestSaveFoundationPersistsNarrativeContract xác minh tham số narrative optional được persist vào
+// meta/narrative.json khi đi kèm một lệnh gọi save_foundation (thường là premise).
+func TestSaveFoundationPersistsNarrativeContract(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	tool := NewSaveFoundationTool(s)
+	args, _ := json.Marshal(map[string]any{
+		"type":    "premise",
+		"content": "# 测试书名\n\n## 题材和基调\n测试",
+		"narrative": map[string]any{
+			"pov":            "ngôi 3 hạn tri",
+			"pov_characters": []string{"Lâm Viễn"},
+			"tense":          "quá khứ",
+			"notes":          "đổi POV chỉ tại ranh giới chương",
+		},
+	})
+	res, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var result map[string]any
+	_ = json.Unmarshal(res, &result)
+	if result["narrative_saved"] != true {
+		t.Fatalf("expected narrative_saved=true, got %+v", result["narrative_saved"])
+	}
+
+	nc, err := s.Outline.LoadNarrative()
+	if err != nil {
+		t.Fatalf("LoadNarrative: %v", err)
+	}
+	if nc == nil || nc.POV != "ngôi 3 hạn tri" || nc.Tense != "quá khứ" {
+		t.Fatalf("unexpected narrative contract: %+v", nc)
+	}
+	if len(nc.POVCharacters) != 1 || nc.POVCharacters[0] != "Lâm Viễn" {
+		t.Fatalf("expected pov_characters=[Lâm Viễn], got %+v", nc.POVCharacters)
+	}
+}
+
+// TestSaveFoundationOmitsNarrativeWhenAbsent xác minh khi không truyền narrative thì không ghi gì
+// (foundation cũ tương thích ngược, không panic).
+func TestSaveFoundationOmitsNarrativeWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	tool := NewSaveFoundationTool(s)
+	args, _ := json.Marshal(map[string]any{
+		"type":    "premise",
+		"content": "# 测试书名\n\n## 题材和基调\n测试",
+	})
+	res, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var result map[string]any
+	_ = json.Unmarshal(res, &result)
+	if _, ok := result["narrative_saved"]; ok {
+		t.Fatalf("expected no narrative_saved when narrative omitted, got %+v", result)
+	}
+
+	nc, err := s.Outline.LoadNarrative()
+	if err != nil {
+		t.Fatalf("LoadNarrative: %v", err)
+	}
+	if !nc.IsEmpty() {
+		t.Fatalf("expected empty narrative when none declared, got %+v", nc)
+	}
+}
+
 // completeBookSetup tạo một Store tối giản đang ở giai đoạn writing, dùng cho các test complete_book.
 // complete_book không kiểm tra tính đầy đủ của các chương trong layered_outline (trách nhiệm phán định thuộc về "danh sách phán định hoàn kết" của LLM),
 // tầng công cụ chỉ kiểm tra PendingRewrites rỗng và progress đã được khởi tạo.

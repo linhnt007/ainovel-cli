@@ -418,6 +418,17 @@ func (t *ContextTool) styleStopwords() []string {
 }
 
 func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope, state contextBuildState, warn func(string, error)) {
+	// narrative_contract: chuẩn ngôi kể/thì khai ở foundation, tiêm mỗi chương (vài chục token) làm chuẩn cứng
+	// cho Người viết chống trôi POV/thì và làm mốc đối chiếu continuity cho Biên tập viên (editor chiều 7).
+	// Foundation cũ thiếu trường → LoadNarrative trả nil → IsEmpty=true → bỏ qua êm, không tiêm.
+	if narrative, err := t.store.Outline.LoadNarrative(); err == nil {
+		if !narrative.IsEmpty() {
+			envelope.Working["narrative_contract"] = narrative
+		}
+	} else {
+		warn("narrative_contract", err)
+	}
+
 	if next, err := t.store.Outline.GetChapterOutline(state.chapter + 1); err == nil && next != nil {
 		envelope.Working["next_chapter_outline"] = next
 	}
@@ -696,6 +707,15 @@ func (t *ContextTool) buildArchitectFoundation(envelope *architectContextEnvelop
 		envelope.Foundation["world_rules"] = rules
 	} else {
 		warn("world_rules", err)
+	}
+	// narrative_contract: cho Kiến trúc sư thấy ngôi kể/thì đã khai (nếu có) để không khai lại/ghi đè khi
+	// sửa gia tăng. Chưa khai → bỏ qua êm.
+	if narrative, err := t.store.Outline.LoadNarrative(); err == nil {
+		if !narrative.IsEmpty() {
+			envelope.Foundation["narrative_contract"] = narrative
+		}
+	} else {
+		warn("narrative_contract", err)
 	}
 	if foreshadow, err := t.store.World.LoadActiveForeshadow(); err == nil && len(foreshadow) > 0 {
 		envelope.Foundation["foreshadow_ledger"] = foreshadow

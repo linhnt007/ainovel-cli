@@ -68,6 +68,80 @@ func TestContextToolInjectsStyleStats(t *testing.T) {
 	}
 }
 
+// Part L — foundation có narrative → working memory của Người viết chứa narrative_contract mỗi chương.
+func TestContextToolInjectsNarrativeContractWhenDeclared(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.Outline.SaveNarrative(domain.NarrativeContract{
+		POV:           "ngôi 3 hạn tri",
+		POVCharacters: []string{"Lâm Viễn"},
+		Tense:         "quá khứ",
+		Notes:         "đổi POV chỉ tại ranh giới chương",
+	}); err != nil {
+		t.Fatalf("SaveNarrative: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 2})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working, ok := payload["working_memory"].(map[string]any)
+	if !ok {
+		t.Fatal("missing working_memory")
+	}
+	nc, ok := working["narrative_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected working_memory.narrative_contract, got %T", working["narrative_contract"])
+	}
+	if nc["pov"] != "ngôi 3 hạn tri" || nc["tense"] != "quá khứ" {
+		t.Fatalf("unexpected narrative_contract payload: %+v", nc)
+	}
+}
+
+// Part L — foundation thiếu narrative → không có narrative_contract, không panic (tương thích ngược).
+func TestContextToolOmitsNarrativeContractWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 2})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working, ok := payload["working_memory"].(map[string]any)
+	if !ok {
+		t.Fatal("missing working_memory")
+	}
+	if _, ok := working["narrative_contract"]; ok {
+		t.Fatalf("expected no narrative_contract when foundation lacks narrative, got %+v", working["narrative_contract"])
+	}
+}
+
 func keysOf(m map[string]json.RawMessage) []string {
 	var keys []string
 	for k := range m {

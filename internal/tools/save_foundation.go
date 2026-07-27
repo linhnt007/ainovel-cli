@@ -39,16 +39,20 @@ func (t *SaveFoundationTool) Schema() map[string]any {
 		schema.Property("scale", schema.Enum("mức quy hoạch", "short", "mid", "long")),
 		schema.Property("volume", schema.Int("số thứ tự tập mục tiêu (chỉ bắt buộc khi expand_arc)")),
 		schema.Property("arc", schema.Int("số thứ tự cung truyện mục tiêu (chỉ bắt buộc khi expand_arc)")),
+		schema.Property("narrative", map[string]any{
+			"description": "Tùy chọn. Hợp đồng tường thuật của toàn tác phẩm, khai một lần khi tạo nền (kèm chung lệnh gọi type=premise là tiện nhất). Đối tượng {pov, pov_characters, tense, notes}: pov ví dụ 'ngôi 1' / 'ngôi 3 hạn tri' / 'ngôi 3 toàn tri' / 'đa POV'; pov_characters là mảng tên nhân vật giữ góc nhìn; tense là 'quá khứ' hoặc 'hiện tại'; notes ghi quy tắc chuyển POV (ví dụ 'đổi POV chỉ tại ranh giới chương; mỗi chương 1 POV'). Bỏ trống = không ràng buộc ngôi kể (hành vi cũ).",
+		}),
 	)
 }
 
 func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
 	var a struct {
-		Type    string          `json:"type"`
-		Content json.RawMessage `json:"content"`
-		Scale   string          `json:"scale"`
-		Volume  int             `json:"volume"`
-		Arc     int             `json:"arc"`
+		Type      string          `json:"type"`
+		Content   json.RawMessage `json:"content"`
+		Scale     string          `json:"scale"`
+		Volume    int             `json:"volume"`
+		Arc       int             `json:"arc"`
+		Narrative json.RawMessage `json:"narrative"` // hợp đồng tường thuật optional, độc lập với type
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("invalid args: %w: %w", errs.ErrToolArgs, err)
@@ -69,6 +73,15 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 	}
 
 	result := map[string]any{"saved": true, "type": a.Type, "scale": a.Scale}
+
+	// Hợp đồng tường thuật đi kèm optional, độc lập với type: khai một lần (thường kèm premise),
+	// persist ngay vào meta/narrative.json để mỗi chương tiêm được narrative_contract. Bỏ trống = giữ
+	// hành vi cũ (không ràng buộc POV/thì) — foundation cũ không có trường này vẫn chạy bình thường.
+	if saved, err := t.persistNarrative(a.Narrative); err != nil {
+		return nil, err
+	} else if saved {
+		result["narrative_saved"] = true
+	}
 
 	// Giai đoạn viết cấm ghi đè toàn bộ đề cương, chỉ cho phép thao tác tăng dần (expand_arc / append_volume)
 	if (a.Type == "outline" || a.Type == "layered_outline") && t.isWriting() {
@@ -266,6 +279,31 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		}
 	}
 	return json.Marshal(result)
+}
+
+// persistNarrative giải mã tham số narrative (nếu có) và lưu hợp đồng tường thuật.
+// Tương thích cả khi LLM truyền object trực tiếp lẫn khi bọc JSON thành chuỗi (dùng normalizeFoundationContent).
+// Trả về saved=false khi tham số vắng, null hoặc rỗng — khi đó giữ nguyên hành vi cũ, không ghi gì.
+func (t *SaveFoundationTool) persistNarrative(raw json.RawMessage) (bool, error) {
+	if len(raw) == 0 {
+		return false, nil
+	}
+	text, err := normalizeFoundationContent(raw)
+	if err != nil || text == "" || text == "null" {
+		// Tham số rỗng/null: coi như không khai, bỏ qua êm (không phải lỗi).
+		return false, nil
+	}
+	var nc domain.NarrativeContract
+	if err := decodeFoundationJSON("narrative", text, &nc); err != nil {
+		return false, err
+	}
+	if nc.IsEmpty() {
+		return false, nil
+	}
+	if err := t.store.Outline.SaveNarrative(nc); err != nil {
+		return false, fmt.Errorf("save narrative: %w: %w", errs.ErrStoreWrite, err)
+	}
+	return true, nil
 }
 
 func foundationArtifact(t string) string {

@@ -339,6 +339,25 @@ func (s *OutlineStore) LoadCompass() (*domain.StoryCompass, error) {
 	return &c, nil
 }
 
+// SaveNarrative lưu hợp đồng tường thuật (POV/thì) vào meta/narrative.json.
+// Persist cùng chỗ các artifact foundation khác (meta/*.json, như compass).
+func (s *OutlineStore) SaveNarrative(n domain.NarrativeContract) error {
+	return s.io.WriteJSON("meta/narrative.json", n)
+}
+
+// LoadNarrative đọc hợp đồng tường thuật. Trả về nil khi chưa khai (foundation cũ),
+// để phía gọi bỏ qua êm bằng NarrativeContract.IsEmpty.
+func (s *OutlineStore) LoadNarrative() (*domain.NarrativeContract, error) {
+	var n domain.NarrativeContract
+	if err := s.io.ReadJSON("meta/narrative.json", &n); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &n, nil
+}
+
 func renderLayeredOutline(volumes []domain.VolumeOutline) string {
 	var b strings.Builder
 	b.WriteString("# Đề cương phân cấp\n\n")
