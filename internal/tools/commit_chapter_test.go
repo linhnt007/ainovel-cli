@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -564,5 +565,48 @@ func saveDraftAndCheck(t *testing.T, s *store.Store, ch int, content string) {
 	_ = s.Drafts.SaveChapterPlan(domain.ChapterPlan{Chapter: ch, Title: "test", Goal: "test"})
 	if _, err := s.Checkpoints.AppendArtifact(domain.ChapterScope(ch), "consistency_check", fmt.Sprintf("drafts/%02d.draft.md", ch)); err != nil {
 		t.Fatalf("AppendArtifact consistency_check: %v", err)
+	}
+}
+
+func TestCommitChapterStyleRepetition(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 10); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	// Create a chapter draft with a repeated sentence
+	repeatedText := "Đây là một câu lặp lại rất nhiều lần trong chương để kích hoạt bộ dò lặp câu."
+	content := fmt.Sprintf("%s\n%s\n%s\n", repeatedText, repeatedText, repeatedText)
+	saveDraftAndCheck(t, s, 1, content)
+
+	tool := NewCommitChapterTool(s)
+	args, _ := json.Marshal(map[string]any{
+		"chapter": 1, "summary": "tóm tắt", "characters": []string{"nhân vật chính"}, "key_events": []string{"sự kiện"},
+	})
+	resRaw, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var output struct {
+		RuleViolations []rules.Violation `json:"rule_violations"`
+	}
+	if err := json.Unmarshal(resRaw, &output); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	found := false
+	for _, v := range output.RuleViolations {
+		if v.Rule == "style_repetition" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("phải phát hiện cảnh báo lặp câu style_repetition")
 	}
 }

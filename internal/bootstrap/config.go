@@ -137,6 +137,9 @@ type RoleConfig struct {
 	// Thinking cường độ suy nghĩ của vai trò này (off/minimal/low/medium/high/xhigh), trống = kế thừa mặc định cấp trên.
 	// Được kiểm tra bởi agents.ParseThinkingLevel trước khi áp dụng, giá trị vượt cấp coi như trống.
 	Thinking string `json:"thinking,omitempty"`
+	// ExtraBody ghi đè/bổ sung tham số request cho RIÊNG role này (temperature/top_p/min_p...),
+	// merge đè lên ProviderConfig.ExtraBody theo từng key.
+	ExtraBody map[string]any `json:"extra_body,omitempty"`
 }
 
 // knownRoles là danh sách tên vai trò được hỗ trợ.
@@ -180,6 +183,9 @@ type Config struct {
 
 	// Notify cấu hình cảnh báo không giám sát; mặc định bật (kênh system làm dự phòng).
 	Notify NotifyConfig `json:"notify,omitzero"`
+
+	// Quality cấu hình các cổng và tham số kiểm soát chất lượng.
+	Quality QualityConfig `json:"quality,omitzero"`
 }
 
 // BudgetConfig là tuyên bố chính sách ngân sách của người dùng cho một cuốn sách. Dừng khi vượt giới hạn
@@ -204,8 +210,17 @@ type NotifyConfig struct {
 // IsEnabled trả về liệu cảnh báo có được bật hay không (mặc định true).
 func (n NotifyConfig) IsEnabled() bool { return n.Enabled == nil || *n.Enabled }
 
+// QualityConfig cấu hình các cổng và tham số kiểm soát chất lượng.
+type QualityConfig struct {
+	HumanGateEvery int `json:"human_gate_every,omitempty"`
+}
+
 // ValidateBase kiểm tra cấu hình cơ bản.
 func (c *Config) ValidateBase() error {
+	if c.Quality.HumanGateEvery < 0 {
+		return fmt.Errorf("quality.human_gate_every must be >= 0: %w", errs.ErrConfig)
+	}
+
 	if err := validateConfigText("provider", c.Provider); err != nil {
 		return err
 	}

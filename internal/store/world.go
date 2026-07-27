@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 )
@@ -283,6 +284,30 @@ func (s *WorldStore) SaveReview(r domain.ReviewEntry) error {
 		rel = fmt.Sprintf("reviews/%02d-global.json", r.Chapter)
 	}
 	return s.io.WriteJSON(rel, r)
+}
+
+// HumanGateAck đại diện cho việc duyệt qua một chương của người dùng.
+type HumanGateAck struct {
+	Chapter int       `json:"chapter"`
+	Note    string    `json:"note"`
+	At      time.Time `json:"at"`
+}
+
+// SaveHumanGateAck lưu xác nhận duyệt qua chương của người dùng.
+func (s *WorldStore) SaveHumanGateAck(chapter int, note string) error {
+	ack := HumanGateAck{
+		Chapter: chapter,
+		Note:    note,
+		At:      time.Now(),
+	}
+	return s.io.WriteJSON(fmt.Sprintf("reviews/%02d-humangate.json", chapter), ack)
+}
+
+// HasHumanGateAck kiểm tra xem người dùng đã duyệt qua chương này chưa.
+func (s *WorldStore) HasHumanGateAck(chapter int) bool {
+	var ack HumanGateAck
+	err := s.io.ReadJSON(fmt.Sprintf("reviews/%02d-humangate.json", chapter), &ack)
+	return err == nil && ack.Chapter == chapter
 }
 
 // HasArcReview kiểm tra xem chương được chỉ định (chương cuối cung truyện) đã lưu đánh giá scope=arc chưa.

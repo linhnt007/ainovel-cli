@@ -5,6 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
 )
 
@@ -57,5 +58,54 @@ func TestLoadChapterContent_EmptyDraft(t *testing.T) {
 	}
 	if text != "" || count != 0 {
 		t.Errorf("want (\"\", 0), got (%q, %d)", text, count)
+	}
+}
+
+func TestExtractStyleAnchors_AestheticSort(t *testing.T) {
+	s := newTestStore(t)
+
+	// Viết các đoạn văn mẫu cho 3 chương, mỗi đoạn thỏa mãn điều kiện làm anchor (50-300 runes, ko quá 2 ngoặc kép)
+	para1 := "Đây là đoạn văn của chương một với độ dài vừa đủ để có thể trích xuất làm điểm neo phong cách của truyện."
+	para2 := "Đây là đoạn văn của chương hai, chương này sẽ được cho điểm thẩm mỹ cao nhất để kiểm tra tính năng sắp xếp."
+	para3 := "Đây là đoạn văn của chương ba, có điểm thẩm mỹ trung bình khá nhằm kiểm định độ chính xác của bộ lọc."
+
+	_ = s.Drafts.SaveDraft(1, para1)
+	_ = s.Drafts.SaveFinalChapter(1, para1)
+	_ = s.Drafts.SaveDraft(2, para2)
+	_ = s.Drafts.SaveFinalChapter(2, para2)
+	_ = s.Drafts.SaveDraft(3, para3)
+	_ = s.Drafts.SaveFinalChapter(3, para3)
+
+	// Ghi các file review với điểm aesthetic khác nhau
+	r1 := domain.ReviewEntry{
+		Chapter: 1,
+		Dimensions: []domain.DimensionScore{
+			{Dimension: "aesthetic", Score: 70},
+		},
+	}
+	r2 := domain.ReviewEntry{
+		Chapter: 2,
+		Dimensions: []domain.DimensionScore{
+			{Dimension: "aesthetic", Score: 90},
+		},
+	}
+	r3 := domain.ReviewEntry{
+		Chapter: 3,
+		Dimensions: []domain.DimensionScore{
+			{Dimension: "aesthetic", Score: 80},
+		},
+	}
+
+	_ = s.World.SaveReview(r1)
+	_ = s.World.SaveReview(r2)
+	_ = s.World.SaveReview(r3)
+
+	// Trích xuất 1 anchor, mong muốn nhận được từ chương 2 (điểm 90)
+	anchors := s.Drafts.ExtractStyleAnchors(1, 3)
+	if len(anchors) != 1 {
+		t.Fatalf("expected 1 anchor, got %v", anchors)
+	}
+	if anchors[0] != para2 {
+		t.Errorf("expected anchor from chapter 2 (para2), got: %q", anchors[0])
 	}
 }

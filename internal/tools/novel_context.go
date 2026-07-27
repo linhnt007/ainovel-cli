@@ -37,10 +37,11 @@ type References struct {
 
 // ContextTool lắp ráp ngữ cảnh cần thiết cho chương hiện tại.
 type ContextTool struct {
-	store     *store.Store
-	refs      References
-	style     string
-	rulesOpts rules.LoadOptions
+	store               *store.Store
+	refs                References
+	style               string
+	rulesOpts           rules.LoadOptions
+	WriterContextWindow int
 }
 
 // NewContextTool tạo công cụ ngữ cảnh. rulesOpts kiểm soát nguồn tải user_rules;
@@ -397,13 +398,23 @@ func (t *ContextTool) loadLayeredCharacters(result map[string]any, chapter int, 
 }
 
 // writerReferences trả về tài liệu tham khảo viết. Chương 1 trả về đầy đủ, các chương sau cắt bớt mẫu không còn cần thiết.
-func (t *ContextTool) writerReferences(chapter int) map[string]string {
+func (t *ContextTool) writerReferences(chapter int, compact bool) map[string]string {
 	refs := map[string]string{}
 	add := func(k, v string) {
 		if v != "" {
 			refs[k] = v
 		}
 	}
+
+	if compact {
+		// Dưới chế độ compact cho cửa sổ nhỏ: chỉ giữ anti_ai_tone (bỏ guides chương ≤3, giữ template chương 1)
+		add("anti_ai_tone", t.refs.AntiAITone)
+		if chapter <= 1 {
+			add("chapter_template", t.refs.ChapterTemplate)
+		}
+		return refs
+	}
+
 	// Tải dần: luôn giữ tham khảo cốt lõi, 3 chương đầu tải thêm hướng dẫn viết đầy đủ
 	add("consistency", t.refs.Consistency)
 	add("hook_techniques", t.refs.HookTechniques)

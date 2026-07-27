@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/host"
 )
 
@@ -210,6 +213,69 @@ func commandRegistryInstance() commandRegistry {
 				})
 				m.refreshEventViewport()
 				return m, cmd
+			},
+		},
+		{
+			Name:        "gate",
+			Group:       "writing",
+			Usage:       "/gate ok [note]",
+			Description: "Duyệt qua mốc kiểm duyệt để tiếp tục sáng tác",
+			AutoExecute: false,
+			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
+				if len(args) == 0 || args[0] != "ok" {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "Sai cú pháp. Sử dụng: /gate ok [ghi chú]", Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+
+				progress, err := m.runtime.Store().Progress.Load()
+				if err != nil || progress == nil || len(progress.CompletedChapters) == 0 {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "Không tìm thấy chương nào cần duyệt", Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				lastCompleted := progress.CompletedChapters[len(progress.CompletedChapters)-1]
+
+				note := ""
+				if len(args) > 1 {
+					note = strings.Join(args[1:], " ")
+				}
+
+				if err := m.runtime.Store().World.SaveHumanGateAck(lastCompleted, note); err != nil {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "Lưu xác nhận duyệt thất bại: " + err.Error(), Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+
+				m.applyEvent(host.Event{
+					Time: time.Now(), Category: "SYSTEM", Summary: fmt.Sprintf("Đã duyệt chương %d thành công.", lastCompleted), Level: "info",
+				})
+
+				if note != "" {
+					chapter := progress.NextChapter()
+					total := progress.TotalChapters
+					_, err := m.runtime.Store().Directives.Add(domain.UserDirective{
+						Text:          note,
+						Chapter:       chapter,
+						TotalChapters: total,
+						CreatedAt:     time.Now().Format(time.RFC3339),
+					})
+					if err != nil {
+						slog.Warn("Lưu chỉ thị từ human gate thất bại", "err", err)
+					}
+				}
+
+				m.refreshEventViewport()
+
+				// Cho chạy tiếp
+				m.runtime.TriggerDispatch()
+				return m, nil
 			},
 		},
 	})

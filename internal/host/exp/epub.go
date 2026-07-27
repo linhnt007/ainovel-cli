@@ -128,7 +128,7 @@ func renderChapterXHTML(ch int, title string, loc chapterLocation, hasLoc bool, 
 
 	fmt.Fprintf(&b, `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="vi">
 <head>
   <title>%s</title>
   <link rel="stylesheet" type="text/css" href="style.css"/>
@@ -175,7 +175,7 @@ func renderCoverXHTML(novelName string) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="vi">
 <head>
   <title>Bìa</title>
   <link rel="stylesheet" type="text/css" href="style.css"/>
@@ -195,7 +195,7 @@ func renderNavXHTML(hasCover bool, chapters []int, titleIdx chapterTitleIndex) s
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="vi">
 <head>
   <title>Mục lục</title>
   <link rel="stylesheet" type="text/css" href="style.css"/>
@@ -243,11 +243,11 @@ func renderOPF(novelName string, hasCover bool, chapters []int) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="zh-CN">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="vi">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">%s</dc:identifier>
     <dc:title>%s</dc:title>
-    <dc:language>zh-CN</dc:language>
+    <dc:language>vi</dc:language>
     <dc:creator>ainovel-cli</dc:creator>
     <meta property="dcterms:modified">%s</meta>
   </metadata>

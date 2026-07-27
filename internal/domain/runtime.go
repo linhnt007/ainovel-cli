@@ -109,6 +109,7 @@ type ContextProfile struct {
 	SummaryWindow  int  // tải tóm tắt N chương gần nhất
 	TimelineWindow int  // tải dòng thời gian N chương gần nhất
 	Layered        bool // true = bật tải tóm tắt phân tầng (tóm tắt tập + cung truyện + chương)
+	Compact        bool // true = bật chế độ gọn cho cửa sổ nhỏ
 }
 
 // MemoryPolicy biểu thị chính sách sử dụng bộ nhớ được chia sẻ lúc chạy.
@@ -144,6 +145,20 @@ func NewContextProfile(totalChapters int) ContextProfile {
 	default:
 		return ContextProfile{SummaryWindow: 3, TimelineWindow: 5, Layered: true}
 	}
+}
+
+// NewContextProfileForWindow tính toán chiến lược ngữ cảnh dựa trên tổng số chương và kích thước cửa sổ ngữ cảnh.
+func NewContextProfileForWindow(totalChapters, contextWindow int) ContextProfile {
+	p := NewContextProfile(totalChapters)
+	const smallWindowTokens = 32000
+	if contextWindow > 0 && contextWindow < smallWindowTokens {
+		p.SummaryWindow = p.SummaryWindow / 2
+		if p.SummaryWindow < 2 {
+			p.SummaryWindow = 2
+		}
+		p.Compact = true
+	}
+	return p
 }
 
 // NewChapterMemoryPolicy tạo chính sách bộ nhớ lúc chạy cho chương dựa trên tiến trình và chiến lược ngữ cảnh.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -166,16 +167,48 @@ func (s *DraftStore) ExtractDialogue(characterName string, aliases []string, max
 	return samples
 }
 
+type chapterScore struct {
+	chapter int
+	score   int
+}
+
 // ExtractStyleAnchors trích xuất các đoạn văn tiêu biểu từ các chương đã lưu chương làm điểm neo phong cách.
+// Ưu tiên chọn các chương có điểm aesthetic cao nhất từ các file review/đánh giá làm điểm neo phong cách (self-exemplar).
 // maxCompletedChapter được truyền từ phía gọi để tránh phụ thuộc chéo miền.
 func (s *DraftStore) ExtractStyleAnchors(maxAnchors, maxCompletedChapter int) []string {
 	if maxAnchors <= 0 {
 		maxAnchors = 5
 	}
 
+	var scores []chapterScore
+	for ch := 1; ch <= maxCompletedChapter; ch++ {
+		score := 0
+		var r domain.ReviewEntry
+		if err := s.io.ReadJSON(fmt.Sprintf("reviews/%02d.json", ch), &r); err == nil {
+			for _, d := range r.Dimensions {
+				if d.Dimension == "aesthetic" {
+					score = d.Score
+					break
+				}
+			}
+		}
+		scores = append(scores, chapterScore{chapter: ch, score: score})
+	}
+
+	// Sắp xếp: điểm cao nhất trước, nếu bằng nhau thì ưu tiên chương nhỏ hơn (để giữ tính ổn định)
+	sort.Slice(scores, func(i, j int) bool {
+		if scores[i].score != scores[j].score {
+			return scores[i].score > scores[j].score
+		}
+		return scores[i].chapter < scores[j].chapter
+	})
+
 	var anchors []string
-	for ch := 1; ch <= maxCompletedChapter && len(anchors) < maxAnchors; ch++ {
-		text, err := s.LoadChapterText(ch)
+	for _, cs := range scores {
+		if len(anchors) >= maxAnchors {
+			break
+		}
+		text, err := s.LoadChapterText(cs.chapter)
 		if err != nil || text == "" {
 			continue
 		}

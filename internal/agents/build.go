@@ -161,6 +161,7 @@ func BuildCoordinator(
 	// theo model swap (xem factory bên dưới).
 	_, writerModelName, _ := models.CurrentSelection("writer")
 	writerContextWindow, writerSource := cfg.ResolveContextWindow(writerModelName)
+	contextTool.WriterContextWindow = writerContextWindow
 	bootstrap.LogContextWindowChoice("coordinator", coordinatorModelName, coordinatorContextWindow, coordinatorSource)
 	bootstrap.LogContextWindowChoice("writer", writerModelName, writerContextWindow, writerSource)
 

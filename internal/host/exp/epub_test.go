@@ -91,9 +91,19 @@ func TestRenderEPUB_StructuralInvariants(t *testing.T) {
 		`href="chapter002.xhtml"`,
 		`idref="ch001"`,
 		`idref="ch002"`,
+		`xml:lang="vi"`,
+		`<dc:language>vi</dc:language>`,
 	} {
 		if !strings.Contains(opf, want) {
 			t.Errorf("OPF missing %q", want)
+		}
+	}
+
+	// Kiểm tra ngôn ngữ trong các file xhtml
+	for _, file := range []string{"OEBPS/chapter001.xhtml", "OEBPS/chapter002.xhtml", "OEBPS/cover.xhtml", "OEBPS/nav.xhtml"} {
+		content := files[file]
+		if !strings.Contains(content, `xml:lang="vi"`) {
+			t.Errorf("%s should have xml:lang=\"vi\"", file)
 		}
 	}
 	if idx1, idx2 := strings.Index(opf, `idref="ch001"`), strings.Index(opf, `idref="ch002"`); idx1 < 0 || idx1 > idx2 {

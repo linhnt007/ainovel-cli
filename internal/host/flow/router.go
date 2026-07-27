@@ -48,6 +48,11 @@ type State struct {
 
 	// Các mục thiếu trong cài đặt nền tảng (tín hiệu bổ sung trong giai đoạn lập kế hoạch).
 	FoundationMissing []string
+
+	// Tần suất dừng chờ người dùng duyệt (human gate).
+	HumanGateEvery int
+	// Trạng thái chờ người dùng duyệt qua Human Gate.
+	HumanGatePending bool
 }
 
 // Route trả về chỉ thị bước tiếp theo dựa trên dữ liệu thực tế; trả về nil nghĩa là để Coordinator LLM tự quyết định.
@@ -56,6 +61,7 @@ type State struct {
 //  1. Phase=Complete        → nil (LLM xuất tóm tắt)
 //  2. Phase!=Writing        → nil (LLM quyết định chọn kiến trúc sư / bổ sung kế hoạch)
 //  3. PendingRewrites không rỗng  → writer viết lại/đánh bóng theo hàng đợi
+//  3.5. Human Gate Pending      → dừng chờ duyệt (/gate)
 //  4. Flow=Steering         → nil (đang xử lý can thiệp của người dùng)
 //  5. Thiếu đánh giá cuối cung truyện           → editor(arc review)
 //  6. Có đánh giá nhưng thiếu tóm tắt cung  → editor(arc summary)
@@ -92,6 +98,15 @@ func Route(s State) *Instruction {
 			Task:    fmt.Sprintf("%s chương %d", verb, ch),
 			Reason:  fmt.Sprintf("Hàng đợi PendingRewrites còn %d chương", len(p.PendingRewrites)),
 			Chapter: ch,
+		}
+	}
+
+	// 3.5. Human Gate: dừng chờ người dùng duyệt qua TUI
+	if s.HumanGatePending {
+		return &Instruction{
+			Agent:  "",
+			Task:   fmt.Sprintf("DỪNG: mốc duyệt chương %d — chờ người dùng duyệt (/gate)", s.LastCompleted),
+			Reason: "human gate",
 		}
 	}
 

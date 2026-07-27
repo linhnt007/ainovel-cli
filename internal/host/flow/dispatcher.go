@@ -33,6 +33,11 @@ type Dispatcher struct {
 	// onRepeat là callback telemetry thuần túy (dùng cho cảnh báo chế độ không giao diện), kích hoạt một lần
 	// khi cùng một lệnh được phát đến lần thứ repeatNotifyAt; không ảnh hưởng ngược lại logic phát lệnh, logic phát không hay biết về sự tồn tại của nó.
 	onRepeat func(agent, task string, n int)
+
+	// Tần suất dừng chờ người dùng duyệt (human gate).
+	HumanGateEvery int
+	// Callback khi dừng tại mốc duyệt người dùng (human gate).
+	onHumanGate func(chapter int)
 }
 
 // repeatNotifyAt cố định không đưa vào cấu hình: đây không phải ngưỡng luồng điều khiển (không kích hoạt hành động nào, chỉ là "gọi người"),
@@ -43,6 +48,16 @@ const repeatNotifyAt = 3
 func NewDispatcher(coordinator *agentcore.Agent, store *storepkg.Store) *Dispatcher {
 	d := &Dispatcher{coordinator: coordinator, store: store}
 	return d
+}
+
+// SetOnHumanGate đăng ký callback cho mốc duyệt người dùng.
+func (d *Dispatcher) SetOnHumanGate(cb func(chapter int)) {
+	d.onHumanGate = cb
+}
+
+// SetOnRepeat đăng ký callback telemetry cho lệnh lặp. Phải gọi một lần trước khi Attach/bắt đầu phát lệnh.
+func (d *Dispatcher) SetOnRepeat(cb func(agent, task string, n int)) {
+	d.onRepeat = cb
 }
 
 // Enable bật phát lệnh theo tuyến đường; khi tắt, EventToolExecEnd đến sẽ không gửi FollowUp.
@@ -76,10 +91,25 @@ func (d *Dispatcher) handle(ev agentcore.Event) {
 // Dispatch tính toán tuyến đường ngay lập tức và gửi lệnh; Host có thể chủ động gọi vào thời điểm đặc biệt (ví dụ sau Resume).
 func (d *Dispatcher) Dispatch() {
 	state := LoadState(d.store)
+	state.HumanGateEvery = d.HumanGateEvery
+	if state.LastCompleted > 0 && state.HumanGateEvery > 0 && state.LastCompleted%state.HumanGateEvery == 0 && !d.store.World.HasHumanGateAck(state.LastCompleted) {
+		state.HumanGatePending = true
+	}
+
 	inst := Route(state)
 	if inst == nil {
 		return
 	}
+
+	if inst.Agent == "" && state.HumanGatePending {
+		slog.Info("Mốc duyệt người dùng: không gọi subagent, thông báo người dùng và chờ", "module", "host.flow", "chapter", state.LastCompleted)
+		if d.onHumanGate != nil {
+			d.onHumanGate(state.LastCompleted)
+		}
+		d.coordinator.FollowUp(agentcore.UserMsg(fmt.Sprintf("[Host] Mốc duyệt người dùng: dừng tiến trình sáng tác tự động để chờ người dùng kiểm tra và duyệt chương %d.", state.LastCompleted)))
+		return
+	}
+
 	n := d.trackRepeat(inst)
 	// Tác vụ Người viết: đánh dấu chương là đang tiến hành ngay lúc phát lệnh, đề cương bên phải TUI phản ánh ngay "▸ đang tiến hành",
 	// không cần chờ plan_chapter thực sự thực thi (plan_chapter sẽ gọi StartChapter lần nữa, idempotent).
@@ -106,11 +136,6 @@ func formatDispatchMessage(inst *Instruction, n int) string {
 		msg += fmt.Sprintf("\n（Lưu ý: Đây là lần thứ %d lệnh này được phát — sau lần phát trước, sự thật route chưa thay đổi. Lần này được phép gọi novel_context kiểm tra sự thật trước, rồi phán quyết tiếp tục thực hiện hoặc chuyển sang agent phụ khác.）", n)
 	}
 	return msg
-}
-
-// SetOnRepeat đăng ký callback telemetry cho lệnh lặp. Phải gọi một lần trước khi Attach/bắt đầu phát lệnh.
-func (d *Dispatcher) SetOnRepeat(cb func(agent, task string, n int)) {
-	d.onRepeat = cb
 }
 
 // trackRepeat ghi lại số lần phát liên tiếp cùng một lệnh và trả về số lần hiện tại (1 = lệnh mới).

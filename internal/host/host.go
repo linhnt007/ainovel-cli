@@ -160,6 +160,12 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 		})
 	}
 	h.router = flow.NewDispatcher(coordinator, store)
+	h.router.HumanGateEvery = cfg.Quality.HumanGateEvery
+	h.router.SetOnHumanGate(func(chapter int) {
+		body := fmt.Sprintf("Mốc duyệt người dùng: dừng tiến trình để kiểm duyệt chương %d. Hãy kiểm tra và nhập lệnh /gate ok.", chapter)
+		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: body, Level: "info"})
+		h.notifier.Send(notify.Notification{Kind: "repeat", Level: "info", Title: "ainovel: Mốc duyệt người dùng", Body: body})
+	})
 	// Cảnh báo lệnh lặp lại: thuần telemetry, khi chạy không người trực "mô hình có thể đang xoay vòng tại chỗ" đáng báo người xem.
 	// Luồng sự kiện và notify phát cùng cặp — notify chỉ là bản sao ngoài màn hình của sự kiện trong màn hình (kiến trúc §2.3).
 	h.router.SetOnRepeat(func(agent, task string, n int) {
@@ -1104,4 +1110,16 @@ func (h *Host) guardExclusive(action string) error {
 // Chỉ đọc snapshot nhất quán của Progress.CompletedChapters + bản thảo cuối chương + đề cương + premise.
 func (h *Host) Export(ctx context.Context, opts exp.Options) (*exp.Result, error) {
 	return exp.Run(ctx, exp.Deps{Store: h.store}, opts)
+}
+
+// Store trả về storepkg.Store của Host.
+func (h *Host) Store() *storepkg.Store {
+	return h.store
+}
+
+// TriggerDispatch kích hoạt Dispatcher để tính toán lại và phát tin tiếp theo.
+func (h *Host) TriggerDispatch() {
+	if h.router != nil {
+		h.router.Dispatch()
+	}
 }

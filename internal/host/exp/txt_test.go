@@ -1,4 +1,4 @@
-﻿package exp
+package exp
 
 import (
 	"strings"
@@ -92,7 +92,7 @@ func TestRenderTXT_TitleAndChapter(t *testing.T) {
 			2: "她推开门。",
 		},
 	)
-	if !strings.HasPrefix(got, "《光斑》\n\n") {
+	if !strings.HasPrefix(got, "«光斑»\n\n") {
 		t.Errorf("missing book title at start:\n%s", got)
 	}
 	// tiền đề không vào xuất: sau tên sách phải là chương trực tiếp, không kẹp bất kỳ tóm tắt tiền đề nào
@@ -118,7 +118,7 @@ func TestRenderTXT_EmptyNovelNameNoTitleLine(t *testing.T) {
 		nil,
 		map[int]string{1: "正文。"},
 	)
-	if strings.Contains(got, "《") {
+	if strings.Contains(got, "«") {
 		t.Errorf("should not contain book title brackets: %s", got)
 	}
 	if !strings.HasPrefix(got, "Chương 1  雨夜归人") {
@@ -127,7 +127,7 @@ func TestRenderTXT_EmptyNovelNameNoTitleLine(t *testing.T) {
 }
 
 // TestRenderTXT_LayeredVolume xác minh đề cương phân tầng chỉ chèn phân cách tập ở đầu tập, phân cách cung không bao giờ xuất hiện
-// (issue #27: định dạng là "《Tên sách》→ phân cách tập → nội dung chương").
+// (issue #27: định dạng là "«Tên sách»→ phân cách tập → nội dung chương").
 func TestRenderTXT_LayeredVolume(t *testing.T) {
 	locs := map[int]chapterLocation{
 		1: {VolumeIdx: 1, VolumeTitle: "起源", IsFirstOfVolume: true},

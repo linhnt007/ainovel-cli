@@ -75,7 +75,11 @@
   //   "writer": {
   //     "provider": "anthropic",
   //     "model": "claude-sonnet-4",
-  //     "fallbacks": [{ "provider": "openrouter", "model": "google/gemini-3.0-pro" }]
+  //     "fallbacks": [{ "provider": "openrouter", "model": "google/gemini-3.0-pro" }],
+  //     "extra_body": {
+  //       "temperature": 0.3,
+  //       "top_p": 0.85
+  //     }
   //   },
   //   "architect": { "provider": "openrouter", "model": "google/gemini-3.1-pro" }
   // },
@@ -112,5 +116,10 @@
   //   // Bark (iOS):         "command": "curl -s --data-urlencode \"title=$NOTIFY_TITLE\" --data-urlencode \"body=$NOTIFY_BODY\" https://api.day.app/<key>"
   //   // ntfy (iOS/Android): "command": "curl -s -G --data-urlencode \"title=$NOTIFY_TITLE\" --data-urlencode \"message=$NOTIFY_BODY\" ntfy.sh/<topic>/publish"
   //   "events": ["run_end", "repeat", "budget"]
+  // }
+  
+  // Tùy chọn. Cấu hình kiểm soát chất lượng.
+  // "quality": {
+  //   "human_gate_every": 5 // Cứ mỗi N chương viết xong thì dừng tiến trình tự động để chờ người dùng duyệt (/gate)
   // }
 }

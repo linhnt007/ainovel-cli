@@ -64,6 +64,23 @@ func TestRoute_PendingPolishingVerb(t *testing.T) {
 	}
 }
 
+func TestRouteHumanGate(t *testing.T) {
+	s := State{
+		Progress: &domain.Progress{
+			Phase:             domain.PhaseWriting,
+			TotalChapters:     40,
+			CompletedChapters: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+			CurrentChapter:    10,
+		},
+		LastCompleted:    10,
+		HumanGatePending: true,
+	}
+	inst := Route(s)
+	if inst == nil || inst.Agent != "" || inst.Reason != "human gate" {
+		t.Fatalf("gate pending phai tra instruction dung-cho, got %+v", inst)
+	}
+}
+
 func TestRoute_SteeringDelegatesToLLM(t *testing.T) {
 	p := writingProgress([]int{1}, domain.FlowSteering)
 	if got := Route(State{Progress: p}); got != nil {

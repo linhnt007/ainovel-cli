@@ -237,7 +237,7 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 		envelope.Episodic["planning_tier"] = runMeta.PlanningTier
 	}
 	if progress != nil && progress.TotalChapters > 0 {
-		state.profile = domain.NewContextProfile(progress.TotalChapters)
+		state.profile = domain.NewContextProfileForWindow(progress.TotalChapters, t.WriterContextWindow)
 	}
 	if progress == nil || !progress.Layered {
 		state.profile.Layered = false
@@ -467,8 +467,12 @@ func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope
 	if state.chapter > 1 {
 		if prevText, err := t.store.Drafts.LoadChapterText(state.chapter - 1); err == nil && prevText != "" {
 			runes := []rune(prevText)
-			if len(runes) > 800 {
-				runes = runes[len(runes)-800:]
+			limit := 800
+			if state.profile.Compact {
+				limit = 400
+			}
+			if len(runes) > limit {
+				runes = runes[len(runes)-limit:]
 			}
 			envelope.Working["previous_tail"] = string(runes)
 		}
@@ -647,7 +651,11 @@ func (t *ContextTool) buildChapterReferencePack(envelope *chapterContextEnvelope
 		if state.progress != nil {
 			maxCompleted = maxCompletedChapter(state.progress.CompletedChapters)
 		}
-		if anchors := t.store.Drafts.ExtractStyleAnchors(3, maxCompleted); len(anchors) > 0 {
+		anchorLimit := 3
+		if state.profile.Compact {
+			anchorLimit = 2
+		}
+		if anchors := t.store.Drafts.ExtractStyleAnchors(anchorLimit, maxCompleted); len(anchors) > 0 {
 			envelope.References["style_anchors"] = anchors
 		}
 
@@ -675,7 +683,7 @@ func (t *ContextTool) buildChapterReferencePack(envelope *chapterContextEnvelope
 		}
 	}
 
-	envelope.References["references"] = t.writerReferences(state.chapter)
+	envelope.References["references"] = t.writerReferences(state.chapter, state.profile.Compact)
 }
 
 func (t *ContextTool) buildArchitectContext(result map[string]any, warn func(string, error)) {

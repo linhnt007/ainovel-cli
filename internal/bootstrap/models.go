@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -178,7 +179,13 @@ func (ms *ModelSet) Swap(role, provider, model string) error {
 	if !ok {
 		return fmt.Errorf("provider %q is not configured: %w", provider, errs.ErrConfig)
 	}
-	next, err := createModelFromConfig(provider, model, pc, make(map[string]agentcore.ChatModel))
+	var roleExtra map[string]any
+	if role != "" && role != "default" {
+		if rc, ok := ms.config.Roles[role]; ok {
+			roleExtra = rc.ExtraBody
+		}
+	}
+	next, err := createModelFromConfig(provider, model, pc, roleExtra, make(map[string]agentcore.ChatModel))
 	if err != nil {
 		return fmt.Errorf("chuyển đổi mô hình thất bại: %w", err)
 	}
@@ -216,7 +223,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 
 	// Tạo mô hình mặc định
 	defaultPC := cfg.DefaultProviderConfig()
-	defaultModel, err := createModelFromConfig(cfg.Provider, cfg.ModelName, defaultPC, cache)
+	defaultModel, err := createModelFromConfig(cfg.Provider, cfg.ModelName, defaultPC, nil, cache)
 	if err != nil {
 		return nil, fmt.Errorf("default model: %w", err)
 	}
@@ -234,7 +241,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 		if !ok {
 			return nil, fmt.Errorf("role %s references unknown provider %q: %w", role, rc.Provider, errs.ErrConfig)
 		}
-		m, err := createModelFromConfig(rc.Provider, rc.Model, pc, cache)
+		m, err := createModelFromConfig(rc.Provider, rc.Model, pc, rc.ExtraBody, cache)
 		if err != nil {
 			return nil, fmt.Errorf("role %s model: %w", role, err)
 		}
@@ -250,7 +257,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 			if !ok {
 				return nil, fmt.Errorf("role %s fallback references unknown provider %q: %w", role, fallback.Provider, errs.ErrConfig)
 			}
-			fm, err := createModelFromConfig(fallback.Provider, fallback.Model, fpc, cache)
+			fm, err := createModelFromConfig(fallback.Provider, fallback.Model, fpc, rc.ExtraBody, cache)
 			if err != nil {
 				return nil, fmt.Errorf("role %s fallback %s/%s: %w", role, fallback.Provider, fallback.Model, err)
 			}
@@ -275,8 +282,37 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 // đang chọn (rotation). Nếu bọc rate limit sẵn ở đây, failoverModel sẽ double-Acquire trên cùng
 // 1 Limiter (deadlock khi MaxConcurrent>0 vì tự chờ semaphore mình đang giữ; double-spend quota
 // RPM/RPD/TPM khi MaxConcurrent=0) — xem task-C-report.md, mục Critical fix.
-func createModelFromConfig(providerKey, model string, pc ProviderConfig, cache map[string]agentcore.ChatModel) (agentcore.ChatModel, error) {
-	cacheKey := providerKey + "|" + model
+func mergeExtraBody(provider, role map[string]any) map[string]any {
+	if len(provider) == 0 && len(role) == 0 {
+		return nil
+	}
+	res := make(map[string]any)
+	for k, v := range provider {
+		res[k] = v
+	}
+	for k, v := range role {
+		res[k] = v
+	}
+	return res
+}
+
+func createModelFromConfig(providerKey, model string, pc ProviderConfig, roleExtra map[string]any, cache map[string]agentcore.ChatModel) (agentcore.ChatModel, error) {
+	merged := mergeExtraBody(pc.ExtraBody, roleExtra)
+	var extraPart string
+	if len(merged) > 0 {
+		keys := make([]string, 0, len(merged))
+		for k := range merged {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s:%v", k, merged[k]))
+		}
+		extraPart = "|" + strings.Join(parts, ";")
+	}
+	cacheKey := providerKey + "|" + model + extraPart
+
 	if m, ok := cache[cacheKey]; ok {
 		return m, nil
 	}
@@ -291,7 +327,7 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, cache m
 		llm.WithBaseURL(pc.BaseURL),
 		llm.WithStreamIdleTimeout(streamIdleTimeout),
 		llm.WithProviderExtra(pc.Extra),
-		llm.WithExtra(pc.ExtraBody),
+		llm.WithExtra(merged),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("provider %s (%s): %w: %w", providerKey, providerType, errs.ErrProvider, err)

@@ -245,3 +245,47 @@ func TestModelSet_ForRole_SingleTarget_ExactlyOneEventPerRealCall(t *testing.T) 
 	}
 	h.Record(0, nil)
 }
+
+func TestModelSet_RoleExtraBody(t *testing.T) {
+	provider := "openai"
+	model := "gpt-4"
+	pc := ProviderConfig{
+		APIKey: "key",
+		ExtraBody: map[string]any{
+			"temperature": 0.7,
+			"top_p":       0.9,
+		},
+	}
+	roleExtra := map[string]any{
+		"temperature": 0.2,
+		"max_tokens":  1000,
+	}
+
+	merged := mergeExtraBody(pc.ExtraBody, roleExtra)
+	if merged["temperature"] != 0.2 {
+		t.Errorf("expected temperature to be overridden to 0.2, got %v", merged["temperature"])
+	}
+	if merged["top_p"] != 0.9 {
+		t.Errorf("expected top_p to be 0.9, got %v", merged["top_p"])
+	}
+	if merged["max_tokens"] != 1000 {
+		t.Errorf("expected max_tokens to be 1000, got %v", merged["max_tokens"])
+	}
+
+	cache := make(map[string]agentcore.ChatModel)
+	m1, err := createModelFromConfig(provider, model, pc, nil, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, err := createModelFromConfig(provider, model, pc, roleExtra, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cache) != 2 {
+		t.Errorf("expected 2 cached model instances due to different ExtraBody, got %d", len(cache))
+	}
+	if m1 == m2 {
+		t.Error("expected different model instances for different extra bodies, but they are identical")
+	}
+}

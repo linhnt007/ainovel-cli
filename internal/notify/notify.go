@@ -86,7 +86,12 @@ func (n *Notifier) deliver(nt Notification) {
 // JSON đầy đủ đồng thời ghi vào stdin (tình huống phân phối phức tạp tự phân tích).
 // Timeout được ctx cưỡng chế dừng.
 func runCommand(ctx context.Context, command string, nt Notification) error {
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	}
 	cmd.Env = append(os.Environ(),
 		"NOTIFY_KIND="+nt.Kind,
 		"NOTIFY_LEVEL="+nt.Level,
@@ -111,6 +116,9 @@ func runSystem(ctx context.Context, nt Notification) error {
 			return nil
 		}
 		return exec.CommandContext(ctx, "notify-send", nt.Title, nt.Body).Run()
+	case "windows":
+		psCmd := `[void] [System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); $objNotifyIcon = New-Object System.Windows.Forms.NotifyIcon; $objNotifyIcon.Icon = [System.Drawing.SystemIcons]::Information; $objNotifyIcon.BalloonTipIcon = 'Info'; $objNotifyIcon.BalloonTipTitle = $args[0]; $objNotifyIcon.BalloonTipText = $args[1]; $objNotifyIcon.Visible = $True; $objNotifyIcon.ShowBalloonTip(10000); Start-Sleep -Seconds 1; $objNotifyIcon.Dispose()`
+		return exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", psCmd, nt.Title, nt.Body).Run()
 	default:
 		slog.Info("Thông báo giảm cấp thành log (nền tảng không có kênh system)", "module", "notify", "title", nt.Title, "body", nt.Body)
 		return nil

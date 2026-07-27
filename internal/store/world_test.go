@@ -297,3 +297,16 @@ func TestRenderWorldRules(t *testing.T) {
 		t.Error("empty boundary rendered")
 	}
 }
+
+func TestHumanGateAck(t *testing.T) {
+	s := newTestStore(t)
+	if s.World.HasHumanGateAck(5) {
+		t.Fatal("chương 5 chưa ack nhưng báo có")
+	}
+	if err := s.World.SaveHumanGateAck(5, "giọng chương 5 hơi cứng"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.World.HasHumanGateAck(5) {
+		t.Fatal("chương 5 đã ack nhưng báo chưa")
+	}
+}

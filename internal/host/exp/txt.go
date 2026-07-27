@@ -110,9 +110,9 @@ func renderTXT(
 	var b strings.Builder
 
 	if name := strings.TrimSpace(novelName); name != "" {
-		b.WriteString("《")
+		b.WriteString("«")
 		b.WriteString(name)
-		b.WriteString("》\n\n")
+		b.WriteString("»\n\n")
 	}
 
 	useLayered := len(locations) > 0
