@@ -7,7 +7,7 @@ Tài liệu này là kho tiêu chí nhận diện "văn phong AI" dùng chung ch
 ## I. Văn phong AI về cấu trúc
 
 - **Câu ba vế / liệt kê đối xứng ba lần**: dùng liên tiếp ba câu ngắn hoặc mệnh đề có cấu trúc đối xứng để "tạo thế" ("Anh không còn do dự, không còn lùi bước, không còn ngoảnh đầu"). Cách sửa: giữ lại một câu mạnh nhất, phần còn lại tách thành hành động hoặc chi tiết cụ thể.
-- **Chồng chất câu đối xứng đều nhau**: mỗi đoạn có độ dài và cú pháp gần giống nhau, đọc như danh sách. Cách sửa: xen kẽ câu dài ngắn, để nhịp văn có hơi thở.
+- **Chồng chất câu đối xứng đều nhau / Chuỗi câu cụt liên tiếp**: mỗi đoạn có độ dài và cú pháp ngắn giống nhau, tóm tắt hành động thô mà thiếu miêu tả bối cảnh/ngũ quan ("Anh đi vào. Cửa mở. Hắn nhìn anh. Không ai nói gì."). Cách sửa: xen kẽ câu dài ngắn, đưa vào chi tiết ngũ quan và bối cảnh để nhịp văn có hơi thở.
 - **Tiêu đề phụ đánh số trong chương / chia cắt bằng `##`**: xuất hiện các mục `một` `hai` `ba` hoặc dấu `##`/`###` trong thân bài. Cách sửa: chỉ giữ tiêu đề chương, dùng dòng trống chuyển cảnh tự nhiên.
 
 ## II. Văn phong AI về từ ngữ

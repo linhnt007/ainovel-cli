@@ -98,8 +98,14 @@ func check(evs []event, lim Limits, now time.Time, estTokens int) time.Duration 
 				sum += e.Tokens
 			}
 		}
-		if sum+estTokens > lim.TPM && !first {
-			ra := time.Duration(oldest-minStart) + time.Nanosecond
+		if sum+estTokens > lim.TPM {
+			var ra time.Duration
+			if !first {
+				ra = time.Duration(oldest-minStart) + time.Nanosecond
+			} else {
+				// Request đơn lẻ vượt TPM khi chưa có request nào khác trong cửa sổ: hoãn 10s rồi thử lại/failover
+				ra = 10 * time.Second
+			}
 			if ra > worst {
 				worst = ra
 			}

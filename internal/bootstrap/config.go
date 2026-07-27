@@ -371,6 +371,28 @@ func (c *Config) FillDefaults() {
 	if c.Budget.Enabled() && c.Budget.WarnRatio == 0 {
 		c.Budget.WarnRatio = 0.8
 	}
+	// Mặc định giới hạn an toàn cho mỗi provider chưa cấu hình rate limit,
+	// tránh bị quota-exceeded (Gemini free tier: 16k input tokens/min).
+	// RPM=10_req/min + TPM=14k_tokens/min — request đầu tiên luôn cho qua,
+	// request tiếp theo chỉ block khi tổng tokens trong phút hiện tại + estTokens > 14k.
+	// User có thể override qua rate_limit.rpm / rate_limit.tpm trong config.
+	const (
+		defaultRPM = 10
+		defaultTPM = 250000
+	)
+	for k, pc := range c.Providers {
+		if pc.RateLimit == nil {
+			pc.RateLimit = &RateLimitConfig{RPM: defaultRPM, TPM: defaultTPM}
+		} else {
+			if pc.RateLimit.RPM == 0 {
+				pc.RateLimit.RPM = defaultRPM
+			}
+			if pc.RateLimit.TPM == 0 {
+				pc.RateLimit.TPM = defaultTPM
+			}
+		}
+		c.Providers[k] = pc
+	}
 }
 
 // ContextWindowSource đánh dấu nguồn gốc của giá trị cửa sổ ngữ cảnh, dùng cho log/chẩn đoán.

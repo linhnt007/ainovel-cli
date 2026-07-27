@@ -283,6 +283,15 @@ func (m Model) handleBaseKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleEnterKey() (tea.Model, tea.Cmd) {
 	text := utils.CleanInputLine(m.textarea.Value())
 	if text == "" {
+		// Enter rỗng ở trạng thái đã dừng (modeRunning nhưng coordinator đã tắt): tự động resume.
+		// Trạng thái paused/stopped placeholder ghi "Enter để tiếp tục", người dùng không cần gõ gì thêm.
+		if m.mode == modeRunning && !m.snapshot.IsRunning {
+			m.applyEvent(host.Event{
+				Time: time.Now(), Category: "SYSTEM", Summary: "Tiếp tục quá trình sáng tác...", Level: "info",
+			})
+			m.refreshEventViewport()
+			return m, bootstrapRuntime(m.runtime)
+		}
 		return m, nil
 	}
 	m.clearCommandPalette()
@@ -478,9 +487,9 @@ func (m Model) handleRuntimeMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.snapshot.RuntimeState = "paused"
 			m.syncRuntimePlaceholder()
 		} else {
-			m.textarea.Placeholder = "Chạy bị gián đoạn, nhập bất kỳ nội dung gì để tiếp tục sáng tác"
+			m.textarea.Placeholder = "Sáng tác đã dừng. Enter để tiếp tục, hoặc gõ nội dung để điều chỉnh"
 		}
-		return m, tea.Batch(fetchSnapshot(m.runtime), listenDone(m.runtime)), true
+		return m, tea.Batch(fetchSnapshot(m.runtime), listenDone(m.runtime), m.textarea.Focus()), true
 	case abortResultMsg:
 		if msg.stopped {
 			m.abortPending = true

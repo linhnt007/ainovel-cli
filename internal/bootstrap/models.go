@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
@@ -131,13 +132,24 @@ func (ms *ModelSet) ForRoleWithFailover(role string, report FailoverReporter) ag
 	if len(targets) == 0 {
 		return &singleTargetModel{primary}
 	}
-	// primary/fallbacks giữ ChatModel raw; failoverModel tự Acquire/Record theo target đang
-	// chọn (rotation) — KHÔNG bọc thêm singleTargetModel ở đây, nếu không sẽ double-Acquire
-	// trên cùng 1 Limiter (deadlock khi MaxConcurrent>0, double-spend quota khi không).
+	pProvider, pName := primary.Current()
+	var cleanTargets []modelTarget
+	seen := map[string]bool{pProvider + "/" + pName: true}
+	for _, t := range targets {
+		k := t.provider + "/" + t.name
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		cleanTargets = append(cleanTargets, t)
+	}
+	if len(cleanTargets) == 0 {
+		return &singleTargetModel{primary}
+	}
 	return &failoverModel{
 		role:      role,
 		primary:   primary,
-		fallbacks: append([]modelTarget(nil), targets...),
+		fallbacks: cleanTargets,
 		report:    report,
 	}
 }
@@ -380,8 +392,19 @@ func (m *failoverModel) pickAvailable(ctx context.Context, est int) (modelTarget
 	}
 	// Tất cả chạm limit → chờ target rẻ nhất.
 	t := targets[bestIdx]
-	slog.Info("ratelimit: mọi model chạm giới hạn, chờ target rẻ nhất",
+	slog.Warn("ratelimit: mọi model chạm giới hạn, tạm dừng chờ",
 		"role", m.role, "target", t.provider+"/"+t.name, "wait", bestRA)
+	if m.report != nil {
+		m.report(FailoverEvent{
+			Role:         m.role,
+			Reason:       "rate_limit_wait",
+			FromProvider: t.provider,
+			FromModel:    t.name,
+			ToProvider:   t.provider,
+			ToModel:      t.name,
+			Err:          fmt.Errorf("chờ rate limit %v", bestRA.Round(time.Second)),
+		})
+	}
 	h, err := ratelimit.Global.For(t.provider, t.name).Acquire(ctx, est)
 	return t, h, err
 }
@@ -463,6 +486,13 @@ func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore
 			if !recorded {
 				handle.Record(0, serr)
 			}
+			if agentcore.FailoverReason(serr) == "rate_limit" {
+				if nextTarget, nh, aerr := m.pickAvailable(ctx, est); aerr == nil {
+					current = nextTarget
+					handle = nh
+					goto retry
+				}
+			}
 			out <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: serr}
 			return
 		}
@@ -499,6 +529,13 @@ func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore
 				}
 				if !recorded {
 					handle.Record(0, ev.Err)
+				}
+				if ev.Err != nil && !forwarded && agentcore.FailoverReason(ev.Err) == "rate_limit" {
+					if nextTarget, nh, aerr := m.pickAvailable(ctx, est); aerr == nil {
+						current = nextTarget
+						handle = nh
+						goto retry
+					}
 				}
 				out <- ev
 				return
@@ -665,13 +702,38 @@ func (m *singleTargetModel) GenerateStream(ctx context.Context, messages []agent
 	return out, nil
 }
 
-// estimateTokens ước lượng thô token đầu vào để pre-gate TPM (≈ 4 ký tự/token).
+// estimateTokens ước lượng thô token đầu vào để pre-gate TPM.
+// Bao gồm TOÀN BỘ nội dung gửi đến API: text blocks, tool call args, thinking blocks.
+// Tiếng Việt / UTF-8 chiếm khoảng 1 token per 2 ký tự (hoặc 1.5-2 runes).
 func estimateTokens(messages []agentcore.Message) int {
-	chars := 0
+	runes := 0
+	bytes := 0
 	for _, msg := range messages {
-		chars += len(msg.TextContent())
+		for _, block := range msg.Content {
+			switch block.Type {
+			case agentcore.ContentText:
+				bytes += len(block.Text)
+				runes += utf8.RuneCountInString(block.Text)
+			case agentcore.ContentThinking:
+				bytes += len(block.Thinking)
+				runes += utf8.RuneCountInString(block.Thinking)
+			case agentcore.ContentToolCall:
+				if block.ToolCall != nil && len(block.ToolCall.Args) > 0 {
+					n := len(block.ToolCall.Args)
+					bytes += n
+					runes += n // JSON args mostly ASCII
+				}
+			}
+		}
 	}
-	return chars / 4
+	if bytes == 0 {
+		return 0
+	}
+	// Nếu text chứa nhiều ký tự đa byte (non-ASCII / UTF-8 Tiếng Việt), ước lượng 1 token ≈ 2 runes
+	if bytes > runes {
+		return runes / 2
+	}
+	return bytes / 4
 }
 
 // responseTokens trích số token thực từ phản hồi (không stream); 0 nếu thiếu Usage.

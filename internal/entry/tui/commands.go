@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -276,6 +277,72 @@ func commandRegistryInstance() commandRegistry {
 				// Cho chạy tiếp
 				m.runtime.TriggerDispatch()
 				return m, nil
+			},
+		},
+		{
+			Name:        "reset",
+			Group:       "writing",
+			Usage:       "/reset [chương]",
+			Description: "Quay lui về chương chỉ định (mặc định: chương 0 — sau kiến trúc sư)",
+			AutoExecute: true,
+			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
+				target := 0
+				if len(args) > 0 {
+					n, err := strconv.Atoi(args[0])
+					if err != nil || n < 0 {
+						m.applyEvent(host.Event{
+							Time: time.Now(), Category: "ERROR", Summary: "Sai cú pháp. Sử dụng: /reset [số chương]", Level: "error",
+						})
+						m.refreshEventViewport()
+						return m, nil
+					}
+					target = n
+				}
+
+				if err := m.runtime.ResetToChapter(target); err != nil {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "Quay lui thất bại: " + err.Error(), Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+
+				// Xóa sự kiện và stream TUI
+				m.events = nil
+				m.eventIndex = nil
+				m.streamRounds = nil
+				m.mode = modeNew
+				m.textarea.Placeholder = placeholderForNewMode(startupModeQuick)
+				m.textarea.Reset()
+				m.textarea.Focus()
+
+				m.snapshot = m.runtime.Snapshot()
+				m.refreshEventViewport()
+				m.refreshStreamViewport()
+				m.refreshDetailViewport()
+				m.refreshStateViewport()
+				return m, nil
+			},
+		},
+		{
+			Name:        "resume",
+			Group:       "writing",
+			Usage:       "/resume",
+			Description: "Tiếp tục quá trình sáng tác đang dở (khôi phục từ checkpoint)",
+			AutoExecute: true,
+			Run: func(m Model, _ []string) (tea.Model, tea.Cmd) {
+				if m.snapshot.IsRunning {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "Đang trong quá trình sáng tác, không cần resume", Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				m.applyEvent(host.Event{
+					Time: time.Now(), Category: "SYSTEM", Summary: "Đang khôi phục quá trình sáng tác...", Level: "info",
+				})
+				m.refreshEventViewport()
+				return m, bootstrapRuntime(m.runtime)
 			},
 		},
 	})

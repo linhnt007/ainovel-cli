@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"unicode/utf8"
 
 	"github.com/voocel/agentcore/schema"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/errs"
+	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -113,7 +113,7 @@ func (t *DraftChapterTool) Execute(_ context.Context, args json.RawMessage) (jso
 			"written":    true,
 			"chapter":    a.Chapter,
 			"mode":       "append",
-			"word_count": utf8.RuneCountInString(full),
+			"word_count": rules.CountWords(full),
 			"next_step":  "Trước tiên read_chapter(source=draft) để đọc lại bản nháp, rồi gọi check_consistency, cuối cùng commit_chapter",
 		})
 	default: // write
@@ -130,7 +130,7 @@ func (t *DraftChapterTool) Execute(_ context.Context, args json.RawMessage) (jso
 			"written":    true,
 			"chapter":    a.Chapter,
 			"mode":       "write",
-			"word_count": utf8.RuneCountInString(a.Content),
+			"word_count": rules.CountWords(a.Content),
 			"next_step":  "Trước tiên read_chapter(source=draft) để đọc lại bản nháp, rồi gọi check_consistency, cuối cùng commit_chapter",
 		})
 	}

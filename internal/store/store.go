@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
@@ -223,4 +224,118 @@ func (s *Store) ClearHandledSteer() error {
 		}
 	}
 	return nil
+}
+
+// RollbackToChapter quay lui về chương target, xóa toàn bộ dữ liệu chương > target.
+// target=0 nghĩa là chưa viết chương nào (sau architect).原子 thao tác qua crossMu.
+func (s *Store) RollbackToChapter(target int) error {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+
+	progress, err := s.Progress.Load()
+	if err != nil {
+		return fmt.Errorf("đọc tiến độ: %w", err)
+	}
+	if progress == nil {
+		return fmt.Errorf("chưa có tiến độ để quay lui")
+	}
+
+	completed := progress.CompletedChapters
+	if target > 0 && !slices.Contains(completed, target) {
+		return fmt.Errorf("chương %d chưa hoàn thành, không thể quay lui về chương này", target)
+	}
+
+	// Xóa file chương > target
+	for _, ch := range completed {
+		if ch <= target {
+			continue
+		}
+		_ = s.Drafts.io.RemoveFile(fmt.Sprintf("chapters/%02d.md", ch))
+		_ = s.Drafts.io.RemoveFile(fmt.Sprintf("drafts/%02d.draft.md", ch))
+		_ = s.Drafts.io.RemoveFile(fmt.Sprintf("drafts/%02d.plan.json", ch))
+		_ = s.Summaries.io.RemoveFile(fmt.Sprintf("summaries/%02d.json", ch))
+		_ = s.World.io.RemoveFile(fmt.Sprintf("reviews/%02d.json", ch))
+		_ = s.World.io.RemoveFile(fmt.Sprintf("reviews/%02d-global.json", ch))
+	}
+
+	// Xóa arc/volume summaries — đơn giản: xóa toàn bộ rồi để hệ thống tạo lại khi cần
+	if target == 0 {
+		volumes, _ := s.Outline.LoadLayeredOutline()
+		for _, v := range volumes {
+			for arc := 1; arc <= len(v.Arcs); arc++ {
+				_ = s.Summaries.io.RemoveFile(fmt.Sprintf("summaries/arc-v%02da%02d.json", v.Index, arc))
+			}
+			_ = s.Summaries.io.RemoveFile(fmt.Sprintf("summaries/vol-v%02d.json", v.Index))
+		}
+	}
+
+	// Xóa checkpoints và signals
+	_ = s.Checkpoints.Reset()
+	s.Signals.ClearStaleSignals()
+	_ = s.Signals.ClearPendingCommit()
+	_ = s.Runtime.Reset()
+
+	// Cập nhật progress
+	return s.Progress.io.WithWriteLock(func() error {
+		p, err := s.Progress.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return nil
+		}
+
+		// Lọc completed chapters
+		var kept []int
+		var wordCount int
+		for _, ch := range p.CompletedChapters {
+			if ch <= target {
+				kept = append(kept, ch)
+				if wc, ok := p.ChapterWordCounts[ch]; ok {
+					wordCount += wc
+				}
+			}
+		}
+
+		p.CompletedChapters = kept
+		p.TotalWordCount = wordCount
+
+		// Xóa word counts của chương bị xóa
+		if p.ChapterWordCounts != nil {
+			for ch := range p.ChapterWordCounts {
+				if ch > target {
+					delete(p.ChapterWordCounts, ch)
+				}
+			}
+		}
+
+		// Đặt lại trạng thái
+		p.InProgressChapter = 0
+		p.CompletedScenes = nil
+		p.PendingRewrites = nil
+		p.RewriteReason = ""
+		p.ReopenedFromComplete = false
+		p.Flow = domain.FlowWriting
+
+		if target == 0 {
+			p.Phase = domain.PhaseOutline
+			p.CurrentChapter = 0
+			p.CurrentVolume = 0
+			p.CurrentArc = 0
+			p.StrandHistory = nil
+			p.HookHistory = nil
+		} else {
+			p.Phase = domain.PhaseWriting
+			p.CurrentChapter = target + 1
+			// Trim strand/hook history
+			if len(p.StrandHistory) > target {
+				p.StrandHistory = p.StrandHistory[:target]
+			}
+			if len(p.HookHistory) > target {
+				p.HookHistory = p.HookHistory[:target]
+			}
+		}
+
+		return s.Progress.saveUnlocked(p)
+	})
 }

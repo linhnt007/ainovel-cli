@@ -1123,3 +1123,23 @@ func (h *Host) TriggerDispatch() {
 		h.router.Dispatch()
 	}
 }
+
+// ResetToChapter quay lui sáng tác về chương target (0 = sau architect, trước khi viết chương nào).
+// Tạm dừng coordinator, xóa dữ liệu chương > target, đặt lại trạng thái lifecycle.
+func (h *Host) ResetToChapter(target int) error {
+	h.Abort()
+
+	if err := h.store.RollbackToChapter(target); err != nil {
+		return fmt.Errorf("quay lui dữ liệu: %w", err)
+	}
+
+	h.router.ResetRepeat()
+
+	h.mu.Lock()
+	h.lifecycle = lifecycleIdle
+	h.mu.Unlock()
+
+	summary := fmt.Sprintf("Đã quay lui về chương %d", target)
+	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: "info"})
+	return nil
+}

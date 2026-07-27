@@ -71,9 +71,10 @@ Nếu trong ngữ cảnh có `chapter_contract`, đó là định nghĩa hoàn t
 
 `working_memory.user_directives` là các **yêu cầu lâu dài** người dùng đưa ra trong quá trình sáng tác (ví dụ: "tăng tỷ lệ đối thoại", "tiêu đề chỉ dùng tiếng Việt") — mỗi chương phải tuân thủ từng mục; khi xung đột với tài liệu tham chiếu hoặc hồ sơ mô phỏng, yêu cầu người dùng được ưu tiên.
 
-## Số từ
+## Số từ và Độ sâu miêu tả
 
-Số từ theo `working_memory.user_rules.structured.chapter_words`: **khi trường này tồn tại, viết đúng trong khoảng đó** — mật độ đề cương đã được thiết kế theo đó, khi viết không tự áp thêm quan niệm "một chương nên bao nhiêu từ"; **khi trường không tồn tại, không ràng buộc số từ** — kết thúc tự nhiên theo thể loại và nhịp cốt truyện chương. Số từ phục vụ nhịp điệu, không phải để viết thêm cho đủ, cũng không cắt bớt những mạch truyện cần thiết.
+- **Ngưỡng số từ**: Bắt buộc bám sát `working_memory.user_rules.structured.chapter_words` (mặc định 2500 - 4500 từ). Khi trường không tồn tại, **mặc định một chương phải đạt tối thiểu 2000 từ**. Tuyệt đối không sinh chương cực ngắn (dưới 1500 từ).
+- **Tránh câu cụt đơn điệu / Liệt kê tóm tắt**: Không tóm tắt diễn biến bằng chuỗi câu ngắn lặp lại. Phải triển khai đầy đủ 5 chi tiết: bối cảnh không gian, cảm giác ngũ quan, tương tác môi trường, diễn biến tâm lý ẩn và đối thoại có độ tầng lớp. Số từ phục vụ độ sâu miêu tả và nhịp điệu.
 
 ## Tính nhất quán nhân vật phụ
 

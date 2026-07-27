@@ -125,9 +125,18 @@ func (t *ContextTool) Execute(_ context.Context, args json.RawMessage) (json.Raw
 		result["_warnings"] = warnings
 	}
 
-	// Ngân sách ưu tiên: khi tổng kích thước vượt ngưỡng thì tự động cắt bớt dữ liệu ưu tiên thấp
+	// Ngân sách ưu tiên: khi tổng kích thước vượt ngưỡng thì tự động cắt bớt dữ liệu ưu tiên thấp.
+	// Ngân sách người viết tỉ lệ thuận cửa sổ ngữ cảnh: ~1.5 bytes per token (UTF-8 Tiếng Việt),
+	// sàn 20KB (cửa sổ rất nhỏ ~16k TPM), trần 100KB (cửa sổ lớn).
 	if a.Chapter > 0 {
-		trimByBudget(result, 100*1024) // Người viết: 100KB
+		budget := t.WriterContextWindow * 3 / 2 // ~1.5 bytes/token
+		if budget < 20*1024 {
+			budget = 20 * 1024
+		}
+		if budget > 100*1024 {
+			budget = 100 * 1024
+		}
+		trimByBudget(result, budget)
 	} else {
 		trimByBudget(result, 60*1024) // Điều phối viên/Kiến trúc sư: 60KB
 	}
