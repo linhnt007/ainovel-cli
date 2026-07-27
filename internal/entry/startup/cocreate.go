@@ -1,7 +1,10 @@
 package startup
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/voocel/ainovel-cli/internal/host"
@@ -38,21 +41,31 @@ func (s *CoCreateSession) ApplyReply(reply host.CoCreateReply) {
 	}
 	s.streamReply = ""
 	s.streamThinking = ""
-	// history lưu toàn bộ Raw ba đoạn phía assistant (bao gồm [DRAFT]) để model vòng sau
-	// thấy được bản nháp mình đã viết vòng trước và tiếp tục cập nhật trên đó; nếu chỉ lưu
-	// Message thì [DRAFT] sẽ hoàn toàn không vào cửa sổ ngữ cảnh, mỗi vòng model chỉ có thể
-	// tóm lại từ hội thoại và dễ mất chi tiết ban đầu. Ở đường dự phòng Raw == Message, tương đương.
-	text := strings.TrimSpace(reply.Raw)
-	if text == "" {
-		text = strings.TrimSpace(reply.Message)
-	}
-	if text != "" {
-		s.history = append(s.history, host.CoCreateMessage{Role: "assistant", Content: text})
+	// Phía assistant chỉ lưu <reply> + (nếu có) khối <draft> của LƯỢT NÀY, KHÔNG lưu Raw tích lũy nữa.
+	// Lý do: Raw còn kèm <ready>/<suggestions> (nhiễu, vô nghĩa cho vòng sau) và draft trong Raw là bản đầy đủ
+	// tích lũy → lặp trong mọi lượt cũ, phình history O(n·draft). Mục đích gốc "để model thấy lại draft" nay do
+	// cơ chế ghim draft hiện hành vào system prompt ở host (buildCoCreateMessages) đảm nhiệm; khối <draft> giữ ở
+	// đây chỉ để model thấy diễn tiến trong cửa sổ K lượt gần nhất. TUI vẫn cắt đúng phần trước <draft> để hiển thị.
+	message := strings.TrimSpace(reply.Message)
+	if message == "" {
+		// Đường dự phòng parse (không tuân thủ giao thức): Message có thể rỗng, Raw giữ nguyên cả đoạn.
+		message = strings.TrimSpace(reply.Raw)
 	}
 	// Chỉ ghi đè draft khi Prompt không rỗng: đường dự phòng parse sẽ trả về Prompt="",
 	// lúc đó phải giữ nguyên draft vòng trước, nếu không "chỉ thị sáng tác hiện tại" mà
 	// người dùng đã tích lũy sẽ bị xóa bởi phản hồi bị cắt đứt.
-	if prompt := strings.TrimSpace(reply.Prompt); prompt != "" {
+	prompt := strings.TrimSpace(reply.Prompt)
+	content := message
+	if prompt != "" {
+		if content != "" {
+			content += "\n\n"
+		}
+		content += "<draft>\n" + prompt + "\n</draft>"
+	}
+	if content != "" {
+		s.history = append(s.history, host.CoCreateMessage{Role: "assistant", Content: content})
+	}
+	if prompt != "" {
 		s.draftPrompt = prompt
 	}
 	s.ready = reply.Ready
@@ -133,6 +146,57 @@ func (s *CoCreateSession) InitialInput() string {
 		return ""
 	}
 	return strings.TrimSpace(s.history[0].Content)
+}
+
+// cocreateSessionData là ảnh chụp JSON của phiên đồng sáng tác để persist qua Esc/quit.
+// Chỉ gồm trạng thái tích lũy có ý nghĩa khôi phục (hội thoại + draft + ready + suggestions);
+// hai luồng streaming (streamReply/streamThinking) là tạm thời trong lúc chờ LLM nên không lưu.
+type cocreateSessionData struct {
+	History     []host.CoCreateMessage `json:"history"`
+	DraftPrompt string                 `json:"draft_prompt"`
+	Ready       bool                   `json:"ready"`
+	Suggestions []string               `json:"suggestions"`
+}
+
+// Save ghi phiên ra file JSON (best-effort: caller nuốt lỗi để không làm hỏng flow chính).
+// Tạo thư mục cha nếu chưa có để không phụ thuộc thứ tự khởi tạo store.
+func (s *CoCreateSession) Save(path string) error {
+	if s == nil {
+		return nil
+	}
+	data := cocreateSessionData{
+		History:     s.history,
+		DraftPrompt: s.draftPrompt,
+		Ready:       s.ready,
+		Suggestions: s.suggestions,
+	}
+	buf, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal cocreate session: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir cocreate session: %w", err)
+	}
+	return os.WriteFile(path, buf, 0o644)
+}
+
+// LoadCoCreateSession đọc phiên đã persist. Trả về lỗi khi file không tồn tại / JSON hỏng để caller
+// quyết định (thường: bỏ qua, mở phiên mới). Các trường streaming khôi phục về rỗng (đúng ngữ nghĩa).
+func LoadCoCreateSession(path string) (*CoCreateSession, error) {
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var data cocreateSessionData
+	if err := json.Unmarshal(buf, &data); err != nil {
+		return nil, fmt.Errorf("unmarshal cocreate session: %w", err)
+	}
+	return &CoCreateSession{
+		history:     data.History,
+		draftPrompt: data.DraftPrompt,
+		ready:       data.Ready,
+		suggestions: data.Suggestions,
+	}, nil
 }
 
 func (s *CoCreateSession) BuildPlan() (Plan, error) {

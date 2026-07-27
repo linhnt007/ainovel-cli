@@ -775,6 +775,21 @@ func (m Model) handleCoCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea.Reset()
 		m.refitTextareaHeight()
 		return m, nil
+	case tea.KeyCtrlX:
+		// Làm mới đồng sáng tác cold-start: xóa file phiên đã lưu và quay về ô nhập ý tưởng trống của tab.
+		// Chỉ áp dụng cho khởi động lạnh (stage không persist), tránh xóa nhầm file của luồng khác.
+		if !state.stage {
+			if state.cancel != nil {
+				state.cancel()
+			}
+			removeCoCreateSession(m.outputDir())
+			m.cocreate = nil
+			m.err = nil
+			m.resizeTextarea()
+			m.textarea.SetValue("")
+			m.textarea.Placeholder = placeholderForNewMode(m.startupMode)
+			return m, m.textarea.Focus()
+		}
 	}
 
 	// Phím số 1/2/3 khi textarea trống và có gợi ý → điền gợi ý tương ứng (không gửi, có thể chỉnh sửa).

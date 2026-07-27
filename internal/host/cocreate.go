@@ -83,16 +83,29 @@ const (
 	tagSuggestions = "suggestions"
 )
 
-func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *store.SessionStore, sysPrompt string, history []CoCreateMessage, onProgress func(kind, text string)) (reply CoCreateReply, err error) {
-	if len(history) == 0 {
-		return CoCreateReply{}, fmt.Errorf("cocreate history is empty")
+// coCreateHistoryWindow là số lượt hội thoại cuối cùng được gửi cho model mỗi vòng.
+// Trước đây gửi lại TOÀN BỘ history mỗi vòng → chi phí O(n²) và (khi assistant lưu cả <draft>) draft
+// bị lặp trong mọi lượt cũ. Chỉ giữ K lượt gần nhất đưa chi phí về O(K); draft hiện hành được ghim
+// riêng vào system prompt (xem buildCoCreateMessages) nên model vẫn luôn có bản chỉ thị mới nhất
+// dù các lượt đầu đã rơi khỏi cửa sổ.
+const coCreateHistoryWindow = 8
+
+// BuildCoCreateMessages dựng danh sách message gửi cho model: system prompt (kèm draft hiện hành ghim ở cuối)
+// + K lượt cuối của history. Tách riêng thành hàm thuần (không phụ thuộc I/O) để kiểm thử được logic cắt cửa sổ
+// và ghim draft mà không cần gọi LLM thật.
+func BuildCoCreateMessages(sysPrompt, draftPrompt string, history []CoCreateMessage) []agentcore.Message {
+	// Ghim draft hiện hành vào cuối system prompt dưới mục "## Bản chỉ thị hiện hành": model thấy bản chỉ thị
+	// mới nhất đúng 1 lần, không phụ thuộc vào việc lượt sinh ra draft có còn trong cửa sổ K hay không.
+	sys := sysPrompt
+	if d := strings.TrimSpace(draftPrompt); d != "" {
+		sys = strings.TrimRight(sysPrompt, "\n") + "\n\n## Bản chỉ thị hiện hành\n" + d
 	}
+	msgs := []agentcore.Message{agentcore.SystemMsg(sys)}
 
-	model := models.ForRole("thinking")
-	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
-	defer cancel()
-
-	msgs := []agentcore.Message{agentcore.SystemMsg(sysPrompt)}
+	// Chỉ gửi K lượt cuối. Cắt trước khi lọc rỗng để "K lượt cuối" bám đúng đuôi history.
+	if len(history) > coCreateHistoryWindow {
+		history = history[len(history)-coCreateHistoryWindow:]
+	}
 	for _, item := range history {
 		content := strings.TrimSpace(item.Content)
 		if content == "" {
@@ -105,6 +118,19 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 			msgs = append(msgs, agentcore.UserMsg(content))
 		}
 	}
+	return msgs
+}
+
+func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *store.SessionStore, sysPrompt, draftPrompt string, history []CoCreateMessage, onProgress func(kind, text string)) (reply CoCreateReply, err error) {
+	if len(history) == 0 {
+		return CoCreateReply{}, fmt.Errorf("cocreate history is empty")
+	}
+
+	model := models.ForRole("thinking")
+	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
+	defer cancel()
+
+	msgs := BuildCoCreateMessages(sysPrompt, draftPrompt, history)
 
 	var raw, thinking strings.Builder
 
@@ -130,7 +156,10 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 		})
 	}()
 
-	streamCh, err := model.GenerateStream(ctx, msgs, nil, agentcore.WithMaxTokens(2048))
+	// 4096 thay vì 2048: <draft> tích lũy qua nhiều lượt có thể rất dài; ở 2048 draft trưởng thành hay bị
+	// cắt giữa chừng, kéo theo mất luôn <ready>/<suggestions> đúng lúc gần hoàn tất. Nới trần token để cả
+	// bốn thẻ (<reply>+<draft>+<ready>+<suggestions>) ra trọn vẹn.
+	streamCh, err := model.GenerateStream(ctx, msgs, nil, agentcore.WithMaxTokens(4096))
 	if err != nil {
 		return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", err)
 	}

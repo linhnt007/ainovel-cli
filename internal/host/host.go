@@ -935,14 +935,16 @@ func (h *Host) ReplayQueue(afterSeq int64) ([]domain.RuntimeQueueItem, error) {
 // ── Đồng sáng tác ──
 
 // CoCreateStream khởi động lạnh đồng sáng tác: làm rõ yêu cầu từ đầu, tạo ra lệnh sáng tác cho cả cuốn sách.
-func (h *Host) CoCreateStream(ctx context.Context, history []CoCreateMessage, onProgress func(kind, text string)) (CoCreateReply, error) {
-	return coCreateStream(ctx, h.models, h.store.Sessions, coCreateSystemPrompt, history, onProgress)
+// draftPrompt là bản chỉ thị hiện hành (draft mới nhất) do session cung cấp, được ghim vào system prompt để
+// model luôn thấy dù các lượt cũ đã bị cắt khỏi cửa sổ K.
+func (h *Host) CoCreateStream(ctx context.Context, draftPrompt string, history []CoCreateMessage, onProgress func(kind, text string)) (CoCreateReply, error) {
+	return coCreateStream(ctx, h.models, h.store.Sessions, coCreateSystemPrompt, draftPrompt, history, onProgress)
 }
 
 // StageCoCreateStream đồng sáng tác giai đoạn: lập kế hoạch hướng tiếp theo dựa trên nội dung đã viết.
 // System prompt = stage prompt + tóm tắt trạng thái câu chuyện hiện tại, để trợ lý biết "đã viết gì rồi".
-func (h *Host) StageCoCreateStream(ctx context.Context, history []CoCreateMessage, onProgress func(kind, text string)) (CoCreateReply, error) {
-	return coCreateStream(ctx, h.models, h.store.Sessions, stageSystemPrompt(h.store), history, onProgress)
+func (h *Host) StageCoCreateStream(ctx context.Context, draftPrompt string, history []CoCreateMessage, onProgress func(kind, text string)) (CoCreateReply, error) {
+	return coCreateStream(ctx, h.models, h.store.Sessions, stageSystemPrompt(h.store), draftPrompt, history, onProgress)
 }
 
 // stagePlanPrefix đóng gói "brief hướng tiếp theo" từ đồng sáng tác thành một can thiệp quy hoạch giai đoạn, giao Coordinator phán xét.

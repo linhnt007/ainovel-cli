@@ -197,6 +197,13 @@ func (m Model) handleBaseKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.startupMode == startupModeQuick {
 				m.startupMode = startupModeCoCreate
+				// Mở tab đồng sáng tác cold-start: nếu có phiên đã lưu (Esc/quit lần trước) thì khôi phục ngay,
+				// mở thẳng modal với hội thoại + draft cũ, để user tiếp tục thay vì mất trắng.
+				if st := restoreCoCreateState(m.outputDir()); st != nil {
+					m.cocreate = st
+					m.err = nil
+					return m, nil
+				}
 			} else {
 				m.startupMode = startupModeQuick
 			}
@@ -637,6 +644,9 @@ func (m Model) handleStartResultMsg(msg startResultMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeNew {
+		// Bắt đầu sáng tác thành công: phiên đồng sáng tác đã "tiêu thụ", xóa file persist để lần sau mở tab là phiên mới.
+		// Quick-start không tạo file nên xóa ở đây là no-op vô hại.
+		removeCoCreateSession(m.outputDir())
 		m.cocreate = nil
 		enableMouse := m.enterRunning()
 		m.resizeTextarea()
@@ -659,6 +669,8 @@ func (m Model) handleCoCreateDoneMsg(msg cocreateDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.err = nil
 	m.cocreate.apply(msg.reply)
+	// Persist sau mỗi lượt (best-effort): Esc/quit sau đó vẫn khôi phục được công sức trau chuốt chỉ thị.
+	saveCoCreateSession(m.outputDir(), m.cocreate)
 	m.textarea.Placeholder = placeholderForCoCreate(m.cocreate)
 	return m, m.textarea.Focus()
 }

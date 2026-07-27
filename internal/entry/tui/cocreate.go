@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -82,9 +84,14 @@ type cocreateState struct {
 	// focusPrompt xác định ↑↓/PgUp/PgDn/Home/End cuộn cột nào: false=cột trái hội thoại (mặc định),
 	// true=cột phải chỉ thị sáng tác. Trang chào đã tắt báo cáo chuột (giữ sao chép gốc), cột phải tràn dựa vào Tab chuyển tiêu điểm rồi cuộn bàn phím.
 	focusPrompt bool
+	// restored=true: phiên này khôi phục từ file đã lưu (không phải mở mới). Dùng để hiển thị dòng thông báo khôi phục
+	// và cho phép Ctrl+X làm mới (xóa file, mở phiên trống).
+	restored bool
 }
 
-func newCoCreateState(initial string) *cocreateState {
+// newCoCreateStateFromSession bọc một CoCreateSession sẵn có vào trạng thái UI. awaiting do caller quyết định:
+// phiên mới → true (gửi ngay vòng đầu); phiên khôi phục từ file → false (chờ user thao tác, không tự gọi LLM).
+func newCoCreateStateFromSession(session *startup.CoCreateSession, awaiting bool) *cocreateState {
 	makeVP := func() viewport.Model {
 		vp := viewport.New(0, 0)
 		vp.MouseWheelEnabled = true
@@ -92,12 +99,62 @@ func newCoCreateState(initial string) *cocreateState {
 		return vp
 	}
 	return &cocreateState{
-		session:    startup.NewCoCreateSession(strings.TrimSpace(initial)),
-		awaiting:   true,
+		session:    session,
+		awaiting:   awaiting,
 		convVP:     makeVP(),
 		promptVP:   makeVP(),
 		convFollow: true,
 	}
+}
+
+func newCoCreateState(initial string) *cocreateState {
+	return newCoCreateStateFromSession(startup.NewCoCreateSession(strings.TrimSpace(initial)), true)
+}
+
+// coCreateSessionPath dựng đường dẫn file persist phiên đồng sáng tác cold-start, cùng gốc meta với
+// cocreate.jsonl (meta/sessions/cocreate.jsonl) — ở đây là meta/cocreate_session.json trong OutputDir.
+func coCreateSessionPath(dir string) string {
+	if strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	return filepath.Join(dir, "meta", "cocreate_session.json")
+}
+
+// saveCoCreateSession ghi phiên cold-start ra file (best-effort: nuốt lỗi để không làm hỏng flow đồng sáng tác).
+// Chỉ persist đồng sáng tác khởi động lạnh (stage=false); đồng sáng tác giai đoạn gắn với run đang chạy, không cần khôi phục qua lần mở app khác.
+func saveCoCreateSession(dir string, state *cocreateState) {
+	if state == nil || state.stage {
+		return
+	}
+	path := coCreateSessionPath(dir)
+	if path == "" {
+		return
+	}
+	_ = state.session.Save(path)
+}
+
+// removeCoCreateSession xóa file phiên (khi StartPrepared thành công hoặc user làm mới). Bỏ qua lỗi không-tồn-tại.
+func removeCoCreateSession(dir string) {
+	path := coCreateSessionPath(dir)
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// restoreCoCreateState thử khôi phục phiên cold-start đã lưu; trả về nil nếu không có file / hỏng / rỗng.
+func restoreCoCreateState(dir string) *cocreateState {
+	path := coCreateSessionPath(dir)
+	if path == "" {
+		return nil
+	}
+	session, err := startup.LoadCoCreateSession(path)
+	if err != nil || session == nil || len(session.History()) == 0 {
+		return nil
+	}
+	st := newCoCreateStateFromSession(session, false)
+	st.restored = true
+	return st
 }
 
 // stageCoCreateOpener là câu mở đầu tổng hợp cho đồng sáng tác theo giai đoạn, được gửi như lượt user kickoff cho LLM,
@@ -424,6 +481,14 @@ func renderCoCreateConversationPanel(width, height int, state *cocreateState, er
 	sysStyle := lipgloss.NewStyle().Foreground(colorDim).Italic(true)
 
 	var lines []string
+	// Dòng thông báo khôi phục: cho user biết đây là phiên trước được nạp lại, và cách làm mới (xóa để bắt đầu lại).
+	if state.restored {
+		notice := "↻ Đã khôi phục phiên đồng sáng tác trước. Tiếp tục bổ sung, Ctrl+S để bắt đầu, hoặc Ctrl+X để xóa và làm mới."
+		for _, line := range wrapStreamText(notice, wrapW) {
+			lines = append(lines, sysStyle.Render(line))
+		}
+		lines = append(lines, "")
+	}
 	for i, item := range state.session.History() {
 		isUser := item.Role != "assistant"
 		// Câu mở đầu tổng hợp của đồng sáng tác giai đoạn (luôn là tin nhắn user của history[0]) hiển thị dưới dạng dòng hệ thống trung tính,

@@ -118,6 +118,8 @@ func startRuntime(rt *host.Host, plan startup.Plan) tea.Cmd {
 
 func runCoCreate(rt *host.Host, state *cocreateState) tea.Cmd {
 	history := state.session.History()
+	// draft hiện hành được ghim vào system prompt phía host; chỉ gửi K lượt cuối của history.
+	draft := state.session.DraftPrompt()
 	ctx, cancel := context.WithCancel(context.Background())
 	state.cancel = cancel
 	state.deltaCh = make(chan cocreateStreamItem, 64)
@@ -130,7 +132,7 @@ func runCoCreate(rt *host.Host, state *cocreateState) tea.Cmd {
 	}
 	start := func() tea.Msg {
 		go func() {
-			reply, err := stream(ctx, history, func(kind, text string) {
+			reply, err := stream(ctx, draft, history, func(kind, text string) {
 				select {
 				case state.deltaCh <- cocreateStreamItem{kind: kind, text: text}:
 				default:
