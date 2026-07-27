@@ -509,3 +509,9 @@ Xung đột duy nhất theo thiết kế: **F–L–M** chung `novel_context*` v
 - **Wave 2:** H, I, J, K — **4 subagent song song**, không chung file. (K cần E đã merge — E thuộc Wave 1 nên tự thoả.)
 - **Wave 3:** L trước, M sau — **tuần tự**.
 - Sau mỗi wave: `go test ./...` + chạy thử 1 phiên headless ngắn (`--prompt` truyện test vài chương) trước khi sang wave kế.
+
+---
+
+## Ghi chú vận hành (Part A đã thực thi)
+
+Đơn vị đếm `chapter_words` đã đổi từ rune sang **từ tách khoảng trắng**. Sách đang viết dở sẽ thấy tổng số từ trong thống kê tiến độ giảm 4-5× sau khi cập nhật — đây là **số đúng**, không phải mất dữ liệu. Không migrate `progress.json` cũ. User nào đã tự chỉnh `chapter_words` theo ngữ nghĩa rune cần chỉnh lại range theo từ.
