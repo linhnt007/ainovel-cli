@@ -335,10 +335,9 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 	styleRules, styleErr := t.store.World.LoadStyleRules()
 	warn("style_rules", styleErr)
 	state.styleRules = styleRules
+	// selectStoryThreads đã tự lo fallback thưa (giữ tuyến treo lâu, chỉ bỏ khi CHỈ có gợi nhớ liên quan
+	// mà dưới ngưỡng), nên ở đây không lọc thêm — nếu lọc theo số lượng sẽ nuốt mất tuyến treo lâu đơn lẻ.
 	state.storyThreads = t.selectStoryThreads(state)
-	if len(state.storyThreads) > 0 && len(state.storyThreads) < storyThreadRecallMinSelected {
-		state.storyThreads = nil
-	}
 
 	return state
 }

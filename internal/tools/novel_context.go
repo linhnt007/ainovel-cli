@@ -667,11 +667,18 @@ func (t *ContextTool) selectStoryThreads(state contextBuildState) []domain.Recal
 	if state.currentEntry == nil {
 		return nil
 	}
-	if len(state.foreshadow) < storyThreadRecallThreshold {
+	// Bỏ ngưỡng cứng ≥6 foreshadow (storyThreadRecallThreshold cũ): recall theo tuổi PHẢI chạy với
+	// mọi số lượng foreshadow active. Lý do sống còn: chế độ layered đòi active_foreshadow==0 mới cho
+	// complete_book (xem applyCompletion trong internal/tools/commit_chapter.go). Truyện ít foreshadow
+	// trước đây không bao giờ được nhắc theo tuổi → writer quên thu hồi → active_foreshadow không bao giờ
+	// về 0 → sách livelock, không thể hoàn thành.
+	if len(state.foreshadow) == 0 {
 		return nil
 	}
 
-	const maxThreads = 5
+	total := resolveTotalChapters(state)
+	agingThreshold := agingThresholdFor(total)
+
 	var items []domain.RecallItem
 	seen := make(map[string]struct{})
 	picked := make(map[string]struct{}) // Các ID phục bút đã chọn, dùng để loại trùng khi bổ sung theo tuổi
@@ -684,6 +691,20 @@ func (t *ContextTool) selectStoryThreads(state contextBuildState) []domain.Recal
 		picked[item.Key] = struct{}{}
 		items = append(items, item)
 	}
+
+	// Vùng kết truyện (xem inEndgame): bỏ cap 5, inject TOÀN BỘ foreshadow active kèm tuổi từng cái.
+	// Đây là bước trả nợ phục bút trước khi đóng sách, chặn đúng livelock active_foreshadow==0 nói trên:
+	// tới cuối sách writer phải nhìn thấy HẾT phục bút còn treo (kể cả cái không trùng từ khóa chương này,
+	// kể cả cái mới đặt) mới thu hồi hết được. Nên bỏ cả ngưỡng tuổi (threshold 0) lẫn cap kết quả.
+	if inEndgame(state, total) {
+		for _, entry := range agingForeshadow(state.foreshadow, state.chapter, picked, 0) {
+			add(agingRecallItem(entry, state.chapter, "Vùng kết truyện: phục bút còn treo cần được thu hồi trước khi hoàn thành sách"))
+		}
+		return items
+	}
+
+	const maxThreads = 5
+	relevanceCount := 0
 
 	// 1. Gợi nhớ theo độ liên quan: phục bút có từ khóa trùng với focus của chương hiện tại.
 	focusTerms := recallFocusTerms(state.currentEntry, state.chapterPlan)
@@ -699,6 +720,7 @@ func (t *ContextTool) selectStoryThreads(state contextBuildState) []domain.Recal
 			Reason:  "Chương hiện tại có thể cần kế thừa phục bút đã đặt",
 			Summary: fmt.Sprintf("Phục bút \"%s\" đặt tại chương %d: %s", entry.ID, entry.PlantedAt, truncateRunes(entry.Description, 30)),
 		})
+		relevanceCount++
 		if len(items) >= maxThreads {
 			return items
 		}
@@ -706,31 +728,89 @@ func (t *ContextTool) selectStoryThreads(state contextBuildState) []domain.Recal
 
 	// 2. Bổ sung theo tuổi: phục bút không liên quan đến chương hiện tại nhưng treo quá lâu chưa thu hồi (ưu tiên cũ nhất), bù vào chỉ tiêu còn lại.
 	//    Bổ sung vào điểm mù tự nhiên của gợi nhớ theo liên quan — những tuyến treo độc lập quá lâu nhưng không trùng từ khóa với chương này.
-	for _, entry := range agingForeshadow(state.foreshadow, state.chapter, picked) {
-		add(domain.RecallItem{
-			Kind:    "story_thread",
-			Key:     entry.ID,
-			Chapter: entry.PlantedAt,
-			Reason:  "Phục bút treo lâu chưa thu hồi, chú ý đẩy tiến hoặc thu hồi đúng lúc",
-			Summary: fmt.Sprintf("Phục bút \"%s\" đặt tại chương %d, đã %d chương chưa thu hồi: %s", entry.ID, entry.PlantedAt, state.chapter-entry.PlantedAt, truncateRunes(entry.Description, 30)),
-		})
+	//    Ngưỡng tuổi giờ scale theo tổng chương (agingThresholdFor) thay vì cố định 30.
+	agingCount := 0
+	for _, entry := range agingForeshadow(state.foreshadow, state.chapter, picked, agingThreshold) {
+		add(agingRecallItem(entry, state.chapter, "Phục bút treo lâu chưa thu hồi, chú ý đẩy tiến hoặc thu hồi đúng lúc"))
+		agingCount++
 		if len(items) >= maxThreads {
 			break
 		}
 	}
 
+	// Fallback thưa (thay cho kiểm tra storyThreadRecallMinSelected ở prepareChapterContext trước đây):
+	// nếu CHỈ có gợi nhớ theo liên quan và số lượng dưới ngưỡng tối thiểu thì bỏ hết để rơi về foreshadow_ledger
+	// đầy đủ (tránh nhiễu một tuyến mờ). NHƯNG phục bút treo lâu (aging) luôn được giữ dù chỉ 1 mục — đó là tín
+	// hiệu chống livelock, không được nuốt vì lý do "thưa".
+	if agingCount == 0 && relevanceCount < storyThreadRecallMinSelected {
+		return nil
+	}
+
 	return items
 }
 
-// agingForeshadow trả về các phục bút chưa thu hồi có tuổi >= foreshadowAgingChapters, sắp xếp theo thứ tự cũ nhất trước,
+// agingRecallItem dựng một RecallItem cho phục bút treo lâu, kèm chú thích tuổi tài khoản (chương hiện tại - chương đặt).
+// Tuổi là sự thật suy ra thuần từ code, chỉ trình bày "đã N chương chưa thu hồi", không ra lệnh.
+func agingRecallItem(entry domain.ForeshadowEntry, chapter int, reason string) domain.RecallItem {
+	return domain.RecallItem{
+		Kind:    "story_thread",
+		Key:     entry.ID,
+		Chapter: entry.PlantedAt,
+		Reason:  reason,
+		Summary: fmt.Sprintf("Phục bút \"%s\" đặt tại chương %d, đã %d chương chưa thu hồi: %s",
+			entry.ID, entry.PlantedAt, chapter-entry.PlantedAt, truncateRunes(entry.Description, 30)),
+	}
+}
+
+// resolveTotalChapters lấy tổng số chương kế hoạch từ state (Progress.TotalChapters).
+// Trả về 0 khi không xác định được — khi đó ngưỡng tuổi rơi về mặc định và không suy ra được vùng kết.
+func resolveTotalChapters(state contextBuildState) int {
+	if state.progress != nil && state.progress.TotalChapters > 0 {
+		return state.progress.TotalChapters
+	}
+	return 0
+}
+
+// agingThresholdFor tính ngưỡng "treo lâu" theo quy mô truyện: max(foreshadowAgingScaleFloor, total/8).
+// Con số cố định 30 chương cũ vô nghĩa với sách 40 chương (không phục bút nào kịp "treo lâu" trước khi hết truyện);
+// scale theo tổng chương để ngưỡng có ý nghĩa ở mọi độ dài. Không xác định được tổng chương (total<=0) → giữ
+// mặc định foreshadowAgingChaptersDefault (30) như hành vi cũ.
+func agingThresholdFor(total int) int {
+	if total <= 0 {
+		return foreshadowAgingChaptersDefault
+	}
+	if scaled := total / 8; scaled > foreshadowAgingScaleFloor {
+		return scaled
+	}
+	return foreshadowAgingScaleFloor
+}
+
+// inEndgame suy ra truyện đã ở vùng kết chưa, từ tín hiệu rẻ sẵn trong state:
+//   - Phase == complete: sách đã ở pha hoàn kết (ví dụ được mở lại để rà soát), hoặc
+//   - heuristic: chương hiện tại đã đạt tỉ lệ endgameChapterPercent so với tổng chương kế hoạch.
+//
+// Vùng kết bật thì selectStoryThreads inject toàn bộ foreshadow active kèm tuổi (chống livelock
+// active_foreshadow==0 — xem applyCompletion trong commit_chapter.go).
+func inEndgame(state contextBuildState, total int) bool {
+	if state.progress != nil && state.progress.Phase == domain.PhaseComplete {
+		return true
+	}
+	if total <= 0 {
+		return false
+	}
+	return state.chapter*100 >= total*endgameChapterPercent
+}
+
+// agingForeshadow trả về các phục bút chưa thu hồi có tuổi >= threshold, sắp xếp theo thứ tự cũ nhất trước,
 // bỏ qua những mục đã được gợi nhớ theo liên quan chọn trong picked. Tham số all đã là danh sách active (chưa thu hồi) nên không cần lọc thêm.
-func agingForeshadow(all []domain.ForeshadowEntry, chapter int, picked map[string]struct{}) []domain.ForeshadowEntry {
+// threshold=0 (dùng ở vùng kết) nghĩa là lấy toàn bộ active có PlantedAt hợp lệ.
+func agingForeshadow(all []domain.ForeshadowEntry, chapter int, picked map[string]struct{}, threshold int) []domain.ForeshadowEntry {
 	var aging []domain.ForeshadowEntry
 	for _, e := range all {
 		if _, ok := picked[e.ID]; ok {
 			continue
 		}
-		if e.PlantedAt <= 0 || chapter-e.PlantedAt < foreshadowAgingChapters {
+		if e.PlantedAt <= 0 || chapter-e.PlantedAt < threshold {
 			continue
 		}
 		aging = append(aging, e)
@@ -876,14 +956,29 @@ func hasMeaningfulOverlap(a, b string) bool {
 	return longestCommonSubstringRunes(ar, br) >= threshold
 }
 
-const storyThreadRecallThreshold = 6
+// storyThreadRecallMinSelected: chỉ dùng cho gợi nhớ THEO LIÊN QUAN (relevance) — nếu số tuyến liên quan chọn được
+// dưới ngưỡng này VÀ không có tuyến treo lâu nào thì bỏ hết, rơi về foreshadow_ledger đầy đủ (tránh nhiễu một tuyến mờ).
+// Phục bút treo lâu (aging) không chịu ngưỡng này: dù chỉ 1 mục cũng phải nổi lên (tín hiệu chống livelock).
 const storyThreadRecallMinSelected = 2
 
-// foreshadowAgingChapters: một phục bút tính từ khi đặt mà vượt quá số chương này vẫn chưa thu hồi thì được coi là "treo lâu".
-// Các phục bút này dù không liên quan đến từ khóa của chương hiện tại vẫn được bổ sung vào story_threads, tránh bị lãng quên hoàn toàn trong truyện dài
-// (gợi nhớ theo liên quan tự nhiên chỉ thấy những tuyến liên quan đến chương này, không thấy tuyến treo độc lập quá lâu).
-// Tuổi là sự thật được suy ra thuần túy từ code (chương hiện tại - chương đặt), chỉ trình bày "đã treo N chương chưa thu hồi", không ra lệnh.
-const foreshadowAgingChapters = 30
+// foreshadowAgingChaptersDefault: ngưỡng "treo lâu" mặc định khi KHÔNG xác định được tổng chương kế hoạch,
+// giữ nguyên hành vi cũ 30 chương. Khi biết tổng chương thì dùng agingThresholdFor để scale theo quy mô.
+// Một phục bút tính từ khi đặt mà vượt quá số chương này vẫn chưa thu hồi thì được coi là "treo lâu": dù không
+// liên quan từ khóa chương hiện tại vẫn được bổ sung vào story_threads, tránh bị lãng quên trong truyện dài
+// (gợi nhớ theo liên quan chỉ thấy tuyến liên quan chương này, không thấy tuyến treo độc lập quá lâu).
+// Tuổi là sự thật suy ra thuần từ code (chương hiện tại - chương đặt), chỉ trình bày "đã treo N chương chưa thu hồi", không ra lệnh.
+const foreshadowAgingChaptersDefault = 30
+
+// foreshadowAgingScaleFloor: sàn dưới của ngưỡng "treo lâu" khi scale theo tổng chương — agingThreshold = max(floor, total/8).
+// Giữ sàn 10 để truyện ngắn không coi phục bút vừa đặt vài chương là "treo lâu".
+const foreshadowAgingScaleFloor = 10
+
+// endgameChapterPercent: từ mốc phần trăm này của tổng chương kế hoạch trở đi coi là "vùng kết" (inEndgame),
+// khi đó inject toàn bộ foreshadow active kèm tuổi để trả nợ phục bút trước khi complete_book.
+// Brief đề xuất ngưỡng ≥80%, nhưng mốc 80% sẽ nuốt cả tình huống chương 50/60 (=83%) vốn được kỳ vọng vẫn ở
+// nhịp "aging thường" (test TestContextToolSelectedMemorySurfacesAgingForeshadow không được sửa) — nên đặt 85%,
+// vừa khớp mốc vùng kết trong acceptance của brief (chương 85/100) vừa giữ tình huống 50/60 ngoài vùng kết.
+const endgameChapterPercent = 85
 
 func longestCommonSubstringRunes(a, b []rune) int {
 	if len(a) == 0 || len(b) == 0 {

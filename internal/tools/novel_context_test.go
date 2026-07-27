@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -914,5 +915,174 @@ func TestContextToolInjectsEmptyUserDirectives(t *testing.T) {
 	}
 	if len(directives) != 0 {
 		t.Errorf("expected empty list, got %v", directives)
+	}
+}
+
+// Part F — chống livelock kết thúc sách: recall theo tuổi phải chạy với MỌI số lượng foreshadow active
+// (bỏ ngưỡng cứng ≥6 cũ), và ngưỡng tuổi scale theo tổng chương (max(10, total/8)) thay vì cố định 30.
+// Sách 40 chương: một phục bút treo 15 chương (>= max(10,40/8=5)=10) phải nổi lên dù chỉ có 3 foreshadow —
+// trước đây bị chặn vì <6 foreshadow.
+func TestContextToolAgingRecallSurfacesSingleForeshadowInShortBook(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	// Chủ đề chương hiện tại không dính từ khóa của bất kỳ phục bút nào → gợi nhớ theo liên quan trả rỗng,
+	// chỉ còn bù theo tuổi có hiệu lực.
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 20, Title: "北岭观星", CoreEvent: "林砚独自登上北岭架设浑天仪观测星象", Scenes: []string{"记录星轨", "校准刻度"}},
+	}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	if err := s.Progress.Init("test", 40); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	// Chỉ 3 phục bút (dưới ngưỡng ≥6 cũ). Một cái treo 15 chương, hai cái mới đặt.
+	if err := s.World.SaveForeshadowLedger([]domain.ForeshadowEntry{
+		{ID: "bronze_mirror", Description: "尘封地窖里的青铜古镜", PlantedAt: 5, Status: "planted"},
+		{ID: "spice_ledger", Description: "码头新到的香料账目", PlantedAt: 18, Status: "planted"},
+		{ID: "child_song", Description: "巷口孩童传唱的童谣", PlantedAt: 19, Status: "planted"},
+	}); err != nil {
+		t.Fatalf("SaveForeshadowLedger: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 20})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload struct {
+		Selected struct {
+			StoryThreads []domain.RecallItem `json:"story_threads"`
+		} `json:"selected_memory"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !containsRecallSummary(payload.Selected.StoryThreads, "青铜古镜") {
+		t.Fatalf("expected aging foreshadow to surface despite only 3 active, got %+v", payload.Selected.StoryThreads)
+	}
+	if !containsRecallSummary(payload.Selected.StoryThreads, "chưa thu hồi") {
+		t.Fatalf("expected aging item to carry overdue annotation, got %+v", payload.Selected.StoryThreads)
+	}
+	// Phục bút mới đặt (tuổi < ngưỡng 10) không được gắn nhãn treo lâu.
+	if containsRecallSummary(payload.Selected.StoryThreads, "香料账目") ||
+		containsRecallSummary(payload.Selected.StoryThreads, "童谣") {
+		t.Fatalf("recent foreshadow must not surface as overdue, got %+v", payload.Selected.StoryThreads)
+	}
+}
+
+// Part F — vùng kết: ở chương 85/100 (>= endgameChapterPercent) bỏ cap 5 và inject TOÀN BỘ foreshadow
+// active kèm tuổi từng cái, kể cả cái vừa đặt — để writer thu hồi hết trước khi complete_book
+// (chế độ layered đòi active_foreshadow==0, xem applyCompletion trong commit_chapter.go).
+func TestContextToolEndgameInjectsAllActiveForeshadowWithAge(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 85, Title: "临渊", CoreEvent: "林砚独自面对深渊边缘的抉择", Scenes: []string{"独白", "凝望"}},
+	}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	if err := s.Progress.Init("test", 100); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	// 12 phục bút active, PlantedAt trải rộng: có cái treo rất lâu, có cái vừa đặt (tuổi 1) ở chương 84.
+	ledger := make([]domain.ForeshadowEntry, 0, 12)
+	plantedAts := []int{3, 8, 14, 21, 29, 36, 44, 51, 60, 70, 79, 84}
+	for i, pa := range plantedAts {
+		ledger = append(ledger, domain.ForeshadowEntry{
+			ID:          fmt.Sprintf("thread_%02d", i),
+			Description: fmt.Sprintf("独立悬置线索编号%02d", i),
+			PlantedAt:   pa,
+			Status:      "planted",
+		})
+	}
+	if err := s.World.SaveForeshadowLedger(ledger); err != nil {
+		t.Fatalf("SaveForeshadowLedger: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 85})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload struct {
+		Selected struct {
+			StoryThreads []domain.RecallItem `json:"story_threads"`
+		} `json:"selected_memory"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	// Bỏ cap 5: toàn bộ 12 phục bút active đều xuất hiện.
+	if got := len(payload.Selected.StoryThreads); got != 12 {
+		t.Fatalf("expected all 12 active foreshadow in endgame (cap 5 removed), got %d: %+v", got, payload.Selected.StoryThreads)
+	}
+	// Mỗi mục kèm tuổi.
+	for _, item := range payload.Selected.StoryThreads {
+		if !strings.Contains(item.Summary, "chưa thu hồi") {
+			t.Fatalf("expected every endgame item to carry age annotation, got %+v", item)
+		}
+	}
+	// Cái vừa đặt (tuổi 1, chương 84) cũng phải xuất hiện — chứng minh không còn ngưỡng tuổi ở vùng kết.
+	if !containsRecallSummary(payload.Selected.StoryThreads, "编号11") ||
+		!containsRecallSummary(payload.Selected.StoryThreads, "đã 1 chương chưa thu hồi") {
+		t.Fatalf("expected freshly-planted foreshadow (age 1) to surface in endgame, got %+v", payload.Selected.StoryThreads)
+	}
+}
+
+// Part F — không xác định được tổng chương → ngưỡng tuổi rơi về mặc định 30 (hành vi cũ):
+// phục bút treo 25 chương KHÔNG nổi (25 < 30), treo 35 chương thì nổi. Nếu dùng nhầm sàn scale 10 thì
+// cái treo 25 sẽ lọt — test này chốt đúng fallback 30.
+func TestContextToolAgingThresholdFallsBackTo30WhenTotalUnknown(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 40, Title: "夜行", CoreEvent: "林砚趁夜穿过荒原前往废驿", Scenes: []string{"避开巡逻", "点燃火把"}},
+	}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	// Tổng chương = 0 → không xác định được; resolveTotalChapters trả 0 → agingThresholdFor dùng mặc định 30.
+	if err := s.Progress.Init("test", 0); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.World.SaveForeshadowLedger([]domain.ForeshadowEntry{
+		{ID: "old_debt", Description: "十年前的一笔旧账", PlantedAt: 5, Status: "planted"},   // tuổi 35 >= 30 → nổi
+		{ID: "mid_thread", Description: "半途搁下的一桩公案", PlantedAt: 15, Status: "planted"}, // tuổi 25 < 30 → không nổi
+	}); err != nil {
+		t.Fatalf("SaveForeshadowLedger: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 40})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload struct {
+		Selected struct {
+			StoryThreads []domain.RecallItem `json:"story_threads"`
+		} `json:"selected_memory"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !containsRecallSummary(payload.Selected.StoryThreads, "旧账") {
+		t.Fatalf("expected 35-chapter-old foreshadow to surface under default threshold 30, got %+v", payload.Selected.StoryThreads)
+	}
+	if containsRecallSummary(payload.Selected.StoryThreads, "公案") {
+		t.Fatalf("25-chapter-old foreshadow must stay out under default threshold 30 (not scale floor 10), got %+v", payload.Selected.StoryThreads)
 	}
 }
