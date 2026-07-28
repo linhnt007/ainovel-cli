@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/voocel/agentcore"
@@ -107,6 +108,39 @@ func TestSessionStore_NilLookup(t *testing.T) {
 	if entries[0]["role"] != "assistant" {
 		t.Errorf("role lost: %v", entries[0]["role"])
 	}
+}
+
+func TestSessionStore_CompactMessage(t *testing.T) {
+	t.Run("do not compact tool results", func(t *testing.T) {
+		msg := agentcore.Message{
+			Role: agentcore.RoleTool,
+			Content: []agentcore.ContentBlock{
+				agentcore.TextBlock("This is a very long tool result content that would have been compacted previously because it exceeds 4096 bytes... " + string(make([]byte, 5000))),
+			},
+		}
+		compacted := compactMessage(msg)
+		if compacted.Content[0].Text != msg.Content[0].Text {
+			t.Fatal("expected tool message to remain unchanged")
+		}
+	})
+
+	t.Run("compact assistant reasoning message", func(t *testing.T) {
+		longText := "First part of the assistant reasoning message... " + string(make([]byte, 500)) + " ...End part of reasoning message."
+		msg := agentcore.Message{
+			Role: agentcore.RoleAssistant,
+			Content: []agentcore.ContentBlock{
+				agentcore.TextBlock(longText),
+			},
+		}
+		compacted := compactMessage(msg)
+		text := compacted.Content[0].Text
+		if len(text) >= len(longText) {
+			t.Fatalf("expected assistant text to be compacted, got length %d vs original %d", len(text), len(longText))
+		}
+		if !strings.Contains(text, "[session_compacted assistant reasoning]") {
+			t.Fatalf("expected compacted placeholder, got: %q", text)
+		}
+	})
 }
 
 func makeAssistantWithUsage() agentcore.Message {

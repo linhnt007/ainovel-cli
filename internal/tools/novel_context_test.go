@@ -916,6 +916,128 @@ func TestContextToolOmitsRewriteBriefForNormalChapter(t *testing.T) {
 	}
 }
 
+func TestContextToolInjectsPriorReviewIssues(t *testing.T) {
+	t.Run("rewrite chapter 5, chapter 4 has error issues", func(t *testing.T) {
+		dir := t.TempDir()
+		s := store.NewStore(dir)
+		if err := s.Init(); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		if err := s.Progress.Init("test", 5); err != nil {
+			t.Fatalf("InitProgress: %v", err)
+		}
+		for i := 1; i <= 5; i++ {
+			if err := s.Progress.MarkChapterComplete(i, 1000, "", ""); err != nil {
+				t.Fatalf("MarkChapterComplete: %v", err)
+			}
+		}
+		if err := s.Progress.SetPendingRewrites([]int{5}, "rewrite chap 5"); err != nil {
+			t.Fatalf("SetPendingRewrites: %v", err)
+		}
+		
+		// Save review for chapter 4 with 2 error issues and 1 warning issue
+		if err := s.World.SaveReview(domain.ReviewEntry{
+			Chapter: 4,
+			Scope:   "chapter",
+			Verdict: "polish",
+			Summary: "chapter 4 summary",
+			Issues: []domain.ConsistencyIssue{
+				{Type: "consistency", Severity: "error", Description: "error issue 1"},
+				{Type: "character", Severity: "critical", Description: "critical issue 2"},
+				{Type: "pacing", Severity: "warning", Description: "warning issue 3"},
+			},
+		}); err != nil {
+			t.Fatalf("SaveReview: %v", err)
+		}
+
+		tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+		args, err := json.Marshal(map[string]any{"chapter": 5})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		result, err := tool.Execute(context.Background(), args)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal(result, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+
+		// Check prior_issues in working_memory
+		workingMemory, ok := payload["working_memory"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected working_memory, got %T", payload["working_memory"])
+		}
+
+		priorIssues, ok := workingMemory["prior_issues"].([]any)
+		if !ok {
+			t.Fatalf("expected prior_issues in working_memory, got %T", workingMemory["prior_issues"])
+		}
+		if len(priorIssues) != 2 {
+			t.Fatalf("expected 2 prior issues, got %d", len(priorIssues))
+		}
+
+		// Also check in rewrite_brief
+		brief, ok := payload["rewrite_brief"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected rewrite_brief, got %T", payload["rewrite_brief"])
+		}
+		briefPrior, ok := brief["prior_issues"].([]any)
+		if !ok {
+			t.Fatalf("expected prior_issues in rewrite_brief, got %T", brief["prior_issues"])
+		}
+		if len(briefPrior) != 2 {
+			t.Fatalf("expected 2 prior issues in brief, got %d", len(briefPrior))
+		}
+	})
+
+	t.Run("rewrite chapter 2 (no prior chapters with issues)", func(t *testing.T) {
+		dir := t.TempDir()
+		s := store.NewStore(dir)
+		if err := s.Init(); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		if err := s.Progress.Init("test", 2); err != nil {
+			t.Fatalf("InitProgress: %v", err)
+		}
+		for i := 1; i <= 2; i++ {
+			if err := s.Progress.MarkChapterComplete(i, 1000, "", ""); err != nil {
+				t.Fatalf("MarkChapterComplete: %v", err)
+			}
+		}
+		if err := s.Progress.SetPendingRewrites([]int{2}, "rewrite chap 2"); err != nil {
+			t.Fatalf("SetPendingRewrites: %v", err)
+		}
+
+		tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+		args, err := json.Marshal(map[string]any{"chapter": 2})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		result, err := tool.Execute(context.Background(), args)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal(result, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+
+		workingMemory := payload["working_memory"].(map[string]any)
+		if _, ok := workingMemory["prior_issues"]; ok {
+			t.Fatal("expected no prior_issues in working_memory")
+		}
+
+		brief := payload["rewrite_brief"].(map[string]any)
+		if _, ok := brief["prior_issues"]; ok {
+			t.Fatal("expected no prior_issues in rewrite_brief")
+		}
+	})
+}
+
 func TestContextToolInjectsUserDirectivesOnBothPaths(t *testing.T) {
 	dir := t.TempDir()
 	s := store.NewStore(dir)

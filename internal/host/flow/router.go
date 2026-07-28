@@ -53,6 +53,11 @@ type State struct {
 	HumanGateEvery int
 	// Trạng thái chờ người dùng duyệt qua Human Gate.
 	HumanGatePending bool
+
+	// QualityReviewInterval: khoảng cách kiểm duyệt toàn cục từ cấu hình (mỗi N chương). Mặc định 5.
+	QualityReviewInterval int
+	// LoadWarnings chứa danh sách cảnh báo khi nạp trạng thái
+	LoadWarnings []string
 }
 
 // Route trả về chỉ thị bước tiếp theo dựa trên dữ liệu thực tế; trả về nil nghĩa là để Coordinator LLM tự quyết định.
@@ -71,6 +76,25 @@ type State struct {
 // 10. Flat mode còn nợ review định kỳ           → editor(batch review)
 // 11. Các trường hợp còn lại                  → writer(viết next_chapter)
 func Route(s State) *Instruction {
+	inst := routeInner(s)
+	if inst == nil && len(s.LoadWarnings) > 0 {
+		next := 1
+		if s.Progress != nil {
+			if n := s.Progress.NextChapter(); n > 0 {
+				next = n
+			}
+		}
+		return &Instruction{
+			Agent:   "writer",
+			Task:    fmt.Sprintf("Viết chương %d", next),
+			Reason:  "Lỗi nạp trạng thái, tiếp tục viết bình thường",
+			Chapter: next,
+		}
+	}
+	return inst
+}
+
+func routeInner(s State) *Instruction {
 	p := s.Progress
 	if p == nil {
 		return nil
@@ -157,8 +181,9 @@ func Route(s State) *Instruction {
 	// review_required và tuân prompt — model yếu bỏ qua → truyện chạy hàng chục chương không review.
 	// Nay quyết định dựa trên sự thật đĩa (HasPendingFlatReview suy từ file review), sống sót qua crash.
 	if !p.Layered && s.HasPendingFlatReview {
-		to := (s.LastCompleted / domain.ReviewInterval) * domain.ReviewInterval
-		from := to - domain.ReviewInterval + 1
+		reviewInterval := domain.GetReviewInterval(s.QualityReviewInterval)
+		to := (s.LastCompleted / reviewInterval) * reviewInterval
+		from := to - reviewInterval + 1
 		return &Instruction{
 			Agent:  "editor",
 			Task:   fmt.Sprintf("Đánh giá batch chương %d-%d (scope=global)", from, to),

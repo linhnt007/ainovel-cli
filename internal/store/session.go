@@ -172,18 +172,49 @@ func compactMessage(m agentcore.Message) agentcore.Message {
 	if len(m.Content) == 0 {
 		return m
 	}
+
+	// KHÔNG nén tool results (role tool)
+	if m.Role == agentcore.RoleTool {
+		return m
+	}
+
+	// Chỉ nén messages có role assistant
+	if m.Role != agentcore.RoleAssistant {
+		return m
+	}
+
 	blocks := make([]agentcore.ContentBlock, len(m.Content))
 	copy(blocks, m.Content)
-
-	toolName := toolNameFromMeta(m.Metadata)
 
 	for i := range blocks {
 		switch blocks[i].Type {
 		case agentcore.ContentText:
-			blocks[i].Text = compactText(m.Role, toolName, blocks[i].Text)
+			if len(blocks[i].Text) > 200 {
+				runes := []rune(blocks[i].Text)
+				if len(runes) > 200 {
+					blocks[i].Text = string(runes[:100]) + "\n... [session_compacted assistant reasoning] ...\n" + string(runes[len(runes)-100:])
+				}
+			}
+		case "thinking":
+			if len(blocks[i].Thinking) > 200 {
+				runes := []rune(blocks[i].Thinking)
+				if len(runes) > 200 {
+					blocks[i].Thinking = string(runes[:100]) + "\n... [session_compacted assistant thinking] ...\n" + string(runes[len(runes)-100:])
+				}
+			}
 		case agentcore.ContentToolCall:
 			if blocks[i].ToolCall != nil {
 				blocks[i].ToolCall = compactToolCall(blocks[i].ToolCall)
+			}
+		}
+		
+		// Fallback check if thinking field is populated but Type is not "thinking"
+		if blocks[i].Type != "thinking" && blocks[i].Thinking != "" {
+			if len(blocks[i].Thinking) > 200 {
+				runes := []rune(blocks[i].Thinking)
+				if len(runes) > 200 {
+					blocks[i].Thinking = string(runes[:100]) + "\n... [session_compacted assistant thinking] ...\n" + string(runes[len(runes)-100:])
+				}
 			}
 		}
 	}

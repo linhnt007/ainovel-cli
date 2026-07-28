@@ -120,6 +120,7 @@
   
   // Tùy chọn. Cấu hình kiểm soát chất lượng.
   // "quality": {
-  //   "human_gate_every": 5 // Cứ mỗi N chương viết xong thì dừng tiến trình tự động để chờ người dùng duyệt (/gate)
+  //   "human_gate_every": 5, // Cứ mỗi N chương viết xong thì dừng tiến trình tự động để chờ người dùng duyệt (/gate)
+  //   "review_interval": 2   // Khoảng cách kiểm duyệt toàn cục (mỗi N chương). Mặc định 5. Giảm xuống 2-3 để editor review sớm hơn.
   // }
 }

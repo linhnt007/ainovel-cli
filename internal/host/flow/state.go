@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"log/slog"
+
 	"github.com/voocel/ainovel-cli/internal/domain"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
 )
@@ -13,7 +15,15 @@ func LoadState(store *storepkg.Store) State {
 		FoundationMissing: store.FoundationMissing(),
 	}
 	progress, err := store.Progress.Load()
-	if err != nil || progress == nil {
+	if err != nil {
+		s.LoadWarnings = append(s.LoadWarnings, "progress.Load: "+err.Error())
+		slog.Warn("LoadState progress.Load failed", "error", err)
+	}
+	if progress == nil {
+		if err == nil {
+			s.LoadWarnings = append(s.LoadWarnings, "progress.Load returned nil")
+			slog.Warn("LoadState progress is nil")
+		}
 		return s
 	}
 	s.Progress = progress
@@ -24,7 +34,10 @@ func LoadState(store *storepkg.Store) State {
 
 	// Ranh giới cung truyện chỉ được tính trong chế độ phân tầng và khi có chương đã hoàn thành
 	if progress.Layered && s.LastCompleted > 0 {
-		if boundary, berr := store.Outline.CheckArcBoundary(s.LastCompleted); berr == nil && boundary != nil {
+		if boundary, berr := store.Outline.CheckArcBoundary(s.LastCompleted); berr != nil {
+			s.LoadWarnings = append(s.LoadWarnings, "CheckArcBoundary: "+berr.Error())
+			slog.Warn("LoadState CheckArcBoundary failed", "error", berr)
+		} else if boundary != nil {
 			s.ArcBoundary = boundary
 			if boundary.IsArcEnd {
 				s.HasArcReview = store.World.HasArcReview(s.LastCompleted)
@@ -42,13 +55,19 @@ func LoadState(store *storepkg.Store) State {
 	// hơn một cờ Flow="reviewing" — cờ mất khi tiến trình crash, còn file review trên đĩa thì không.
 	if !progress.Layered && s.LastCompleted > 0 {
 		// Mốc batch gần nhất: bội số ReviewInterval lớn nhất không vượt quá số chương đã hoàn thành.
-		if mark := (s.LastCompleted / domain.ReviewInterval) * domain.ReviewInterval; mark > 0 {
+		// Dùng QualityReviewInterval từ config nếu có, nếu không dùng mặc định.
+		reviewInterval := domain.GetReviewInterval(s.QualityReviewInterval)
+		if mark := (s.LastCompleted / reviewInterval) * reviewInterval; mark > 0 {
 			// LoadLastReview quét ngược tìm review global gần nhất (chương <= LastCompleted).
 			// Chưa có review nào, hoặc review gần nhất còn cũ hơn mốc batch → batch gần nhất chưa được phủ.
 			// Đọc lỗi cũng coi như còn nợ: thiên về giao lại editor thay vì âm thầm bỏ qua review
 			// (đồng bộ triết lý fail-toward-review của HasArcReview ở nhánh phân tầng).
 			last, lerr := store.World.LoadLastReview(s.LastCompleted)
-			if lerr != nil || last == nil || last.Chapter < mark {
+			if lerr != nil {
+				s.LoadWarnings = append(s.LoadWarnings, "LoadLastReview: "+lerr.Error())
+				slog.Warn("LoadState LoadLastReview failed", "error", lerr)
+				s.HasPendingFlatReview = true
+			} else if last == nil || last.Chapter < mark {
 				s.HasPendingFlatReview = true
 			}
 		}

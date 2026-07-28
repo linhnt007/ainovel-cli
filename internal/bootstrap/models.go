@@ -23,6 +23,7 @@ import (
 // 5 phút bao phủ hầu hết trường hợp thực tế (xem thống kê thời gian suy nghĩ plan→draft trong tasks/todo.md),
 // vẫn nhỏ hơn RequestTimeout 10 phút, đảm bảo thoát được khi mạng thực sự chết.
 const streamIdleTimeout = 5 * time.Minute
+const rateLimitTimeout = 60 * time.Second
 
 // FailoverEvent biểu diễn một lần chuyển đổi nhà cung cấp tường minh.
 // Reason là nhãn ngắn (rate_limit / timeout / stream_idle / network), dùng cho log có cấu trúc.
@@ -381,30 +382,57 @@ func (m *failoverModel) rotationTargets() []modelTarget {
 func (m *failoverModel) pickAvailable(ctx context.Context, est int) (modelTarget, *ratelimit.Handle, error) {
 	targets := m.rotationTargets()
 	var bestRA time.Duration = 1 << 62
-	var bestIdx int
+	var bestIdx int = -1
 	for i, t := range targets {
 		lim := ratelimit.Global.For(t.provider, t.name)
-		if h, ra, ok := lim.TryAcquire(est); ok {
+		h, ra, ok := lim.TryAcquire(est)
+		if ok {
 			return t, h, nil
-		} else if ra < bestRA {
+		}
+		if ra > rateLimitTimeout {
+			slog.Warn("ratelimit: thời gian chờ model vượt quá giới hạn timeout, bỏ qua model",
+				"role", m.role, "target", t.provider+"/"+t.name, "wait", ra, "timeout", rateLimitTimeout)
+			continue
+		}
+		if ra < bestRA {
 			bestRA, bestIdx = ra, i
 		}
 	}
-	// Tất cả chạm limit → chờ target rẻ nhất.
-	t := targets[bestIdx]
-	slog.Warn("ratelimit: mọi model chạm giới hạn, tạm dừng chờ",
-		"role", m.role, "target", t.provider+"/"+t.name, "wait", bestRA)
-	if m.report != nil {
-		m.report(FailoverEvent{
-			Role:         m.role,
-			Reason:       "rate_limit_wait",
-			FromProvider: t.provider,
-			FromModel:    t.name,
-			ToProvider:   t.provider,
-			ToModel:      t.name,
-			Err:          fmt.Errorf("chờ rate limit %v", bestRA.Round(time.Second)),
-		})
+	
+	if bestIdx != -1 {
+		t := targets[bestIdx]
+		slog.Warn("ratelimit: mọi model chạm giới hạn, tạm dừng chờ",
+			"role", m.role, "target", t.provider+"/"+t.name, "wait", bestRA)
+		if m.report != nil {
+			m.report(FailoverEvent{
+				Role:         m.role,
+				Reason:       "rate_limit_wait",
+				FromProvider: t.provider,
+				FromModel:    t.name,
+				ToProvider:   t.provider,
+				ToModel:      t.name,
+				Err:          fmt.Errorf("chờ rate limit %v", bestRA.Round(time.Second)),
+			})
+		}
+		h, err := ratelimit.Global.For(t.provider, t.name).Acquire(ctx, est)
+		return t, h, err
 	}
+
+	// Fallback nếu TẤT CẢ các model đều vượt quá rateLimitTimeout:
+	// Ta vẫn tìm model có thời gian chờ ngắn nhất tuyệt đối để chờ.
+	absoluteBestRA := time.Duration(1 << 62)
+	absoluteBestIdx := 0
+	for i, t := range targets {
+		lim := ratelimit.Global.For(t.provider, t.name)
+		_, ra, _ := lim.TryAcquire(est)
+		if ra < absoluteBestRA {
+			absoluteBestRA = ra
+			absoluteBestIdx = i
+		}
+	}
+	t := targets[absoluteBestIdx]
+	slog.Warn("ratelimit: TẤT CẢ model đều vượt quá giới hạn timeout, buộc phải chờ model có thời gian ngắn nhất",
+		"role", m.role, "target", t.provider+"/"+t.name, "wait", absoluteBestRA)
 	h, err := ratelimit.Global.For(t.provider, t.name).Acquire(ctx, est)
 	return t, h, err
 }

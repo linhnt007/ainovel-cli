@@ -161,6 +161,7 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 	}
 	h.router = flow.NewDispatcher(coordinator, store)
 	h.router.HumanGateEvery = cfg.Quality.HumanGateEvery
+	h.router.QualityReviewInterval = cfg.Quality.ReviewInterval
 	h.router.SetOnHumanGate(func(chapter int) {
 		body := fmt.Sprintf("Mốc duyệt người dùng: dừng tiến trình để kiểm duyệt chương %d. Hãy kiểm tra và nhập lệnh /gate ok.", chapter)
 		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: body, Level: "info"})
@@ -172,6 +173,16 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 		body := fmt.Sprintf("Cùng một lệnh đã được đưa ra lần thứ %d (%s): %s", n, agent, task)
 		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "Lệnh lặp lại: " + body, Level: "warn"})
 		h.notifier.Send(notify.Notification{Kind: "repeat", Level: "warn", Title: "ainovel: Lệnh lặp lại", Body: body})
+	})
+	h.router.SetOnDegraded(func(warnings []string) {
+		h.emitEvent(Event{
+			Time:     time.Now(),
+			Category: "ERROR",
+			Summary:  fmt.Sprintf("Dòng chảy bị suy giảm (degraded): %d lỗi nạp trạng thái", len(warnings)),
+			Detail:   strings.Join(warnings, "; "),
+			Level:    "warn",
+			Kind:     "flow_degraded",
+		})
 	})
 	h.routerDetach = h.router.Attach()
 

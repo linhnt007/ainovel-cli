@@ -289,3 +289,112 @@ func TestModelSet_RoleExtraBody(t *testing.T) {
 		t.Error("expected different model instances for different extra bodies, but they are identical")
 	}
 }
+
+func TestFailoverModel_RateLimitTimeout(t *testing.T) {
+	providerA, modelA := testKey(t, "timeoutA")
+	providerB, modelB := testKey(t, "timeoutB")
+	
+	ratelimit.Global.Register(providerA, modelA, ratelimit.Limits{RPD: 1})
+	ratelimit.Global.Register(providerB, modelB, ratelimit.Limits{})
+
+	fakeA := &fakeChatModel{}
+	fakeB := &fakeChatModel{}
+	
+	ms := &ModelSet{
+		models: map[string]*SwappableModel{
+			"test-role": NewSwappableModel(providerA, modelA, fakeA),
+		},
+		fallbacks: map[string][]modelTarget{
+			"test-role": {
+				{provider: providerA, name: modelA, model: fakeA},
+				{provider: providerB, name: modelB, model: fakeB},
+			},
+		},
+	}
+	fm := ms.ForRoleWithFailover("test-role", nil)
+
+	ctx := context.Background()
+
+	h, ra, ok := ratelimit.Global.For(providerA, modelA).TryAcquire(0)
+	if !ok {
+		t.Fatalf("expected to acquire slot on Model A, but blocked (ra=%v)", ra)
+	}
+	h.Record(0, nil)
+
+	resp, err := fm.Generate(ctx, []agentcore.Message{agentcore.UserMsg("hi")}, nil)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Generate returned nil response")
+	}
+
+	if got := fakeA.callCount(); got != 0 {
+		t.Fatalf("expected fake A call count to be 0, got %d", got)
+	}
+	if got := fakeB.callCount(); got != 1 {
+		t.Fatalf("expected fake B call count to be 1, got %d", got)
+	}
+}
+
+func TestFailoverModel_RateLimitNoTimeout(t *testing.T) {
+	providerA, modelA := testKey(t, "notimeoutA")
+	providerB, modelB := testKey(t, "notimeoutB")
+	
+	ratelimit.Global.Register(providerA, modelA, ratelimit.Limits{MaxConcurrent: 1})
+	ratelimit.Global.Register(providerB, modelB, ratelimit.Limits{MaxConcurrent: 1})
+
+	fakeA := &fakeChatModel{}
+	fakeB := &fakeChatModel{}
+	
+	ms := &ModelSet{
+		models: map[string]*SwappableModel{
+			"test-role": NewSwappableModel(providerA, modelA, fakeA),
+		},
+		fallbacks: map[string][]modelTarget{
+			"test-role": {
+				{provider: providerA, name: modelA, model: fakeA},
+				{provider: providerB, name: modelB, model: fakeB},
+			},
+		},
+	}
+	fm := ms.ForRoleWithFailover("test-role", nil)
+
+	hA, _, okA := ratelimit.Global.For(providerA, modelA).TryAcquire(0)
+	if !okA {
+		t.Fatal("expected to acquire slot on Model A")
+	}
+	hB, _, okB := ratelimit.Global.For(providerB, modelB).TryAcquire(0)
+	if !okB {
+		t.Fatal("expected to acquire slot on Model B")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		hA.Record(0, nil)
+		// Leave hB locked so only Model A becomes available
+	}()
+
+	resp, err := fm.Generate(ctx, []agentcore.Message{agentcore.UserMsg("hi")}, nil)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Generate returned nil response")
+	}
+
+	// Fake A call count should be 1 (because it waited and succeeded on Model A)
+	if got := fakeA.callCount(); got != 1 {
+		t.Fatalf("expected fake A call count to be 1, got %d", got)
+	}
+	// Fake B call count should be 0
+	if got := fakeB.callCount(); got != 0 {
+		t.Fatalf("expected fake B call count to be 0, got %d", got)
+	}
+
+	hB.Record(0, nil)
+}
+

@@ -92,7 +92,19 @@ func (cs *CheckpointStore) AppendArtifact(scope domain.Scope, step, artifact str
 	if artifact == "" {
 		return cs.Append(scope, step, "", "")
 	}
-	data, err := cs.io.ReadFile(artifact)
+	var data []byte
+	var err error
+	for i := 0; i < 3; i++ {
+		data, err = cs.io.ReadFile(artifact)
+		if err == nil {
+			break
+		}
+		if os.IsTimeout(err) || os.IsPermission(err) {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		break
+	}
 	if err != nil {
 		return nil, fmt.Errorf("digest artifact %s: %w", artifact, err)
 	}

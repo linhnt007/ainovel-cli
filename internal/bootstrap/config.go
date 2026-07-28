@@ -213,12 +213,16 @@ func (n NotifyConfig) IsEnabled() bool { return n.Enabled == nil || *n.Enabled }
 // QualityConfig cấu hình các cổng và tham số kiểm soát chất lượng.
 type QualityConfig struct {
 	HumanGateEvery int `json:"human_gate_every,omitempty"`
+	ReviewInterval int `json:"review_interval,omitempty"` // Khoảng cách kiểm duyệt toàn cục (mỗi N chương). Mặc định 5.
 }
 
 // ValidateBase kiểm tra cấu hình cơ bản.
 func (c *Config) ValidateBase() error {
 	if c.Quality.HumanGateEvery < 0 {
 		return fmt.Errorf("quality.human_gate_every must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Quality.ReviewInterval < 0 {
+		return fmt.Errorf("quality.review_interval must be >= 0: %w", errs.ErrConfig)
 	}
 
 	if err := validateConfigText("provider", c.Provider); err != nil {

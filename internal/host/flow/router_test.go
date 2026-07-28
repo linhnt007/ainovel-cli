@@ -361,3 +361,38 @@ func TestDispatcher_OnRepeatFiresOnceAtThreshold(t *testing.T) {
 		t.Fatalf("sau khi đổi key phải tái vũ trang, got %v", fired)
 	}
 }
+
+func TestRoute_LoadWarningsFallback(t *testing.T) {
+	t.Run("nil progress but has warnings", func(t *testing.T) {
+		s := State{
+			Progress:     nil,
+			LoadWarnings: []string{"failed to load progress"},
+		}
+		got := Route(s)
+		if got == nil {
+			t.Fatal("expected fallback instruction, got nil")
+		}
+		if got.Agent != "writer" || got.Chapter != 1 {
+			t.Fatalf("expected writer for chapter 1, got %+v", got)
+		}
+	})
+
+	t.Run("writing phase but returns nil (e.g. steering) with warnings", func(t *testing.T) {
+		s := State{
+			Progress: &domain.Progress{
+				Phase:             domain.PhaseWriting,
+				Flow:              domain.FlowSteering,
+				CompletedChapters: []int{1},
+			},
+			LoadWarnings: []string{"some warning"},
+		}
+		got := Route(s)
+		if got == nil {
+			t.Fatal("expected fallback instruction, got nil")
+		}
+		if got.Agent != "writer" || got.Chapter != 2 {
+			t.Fatalf("expected writer for next chapter (2), got %+v", got)
+		}
+	})
+}
+

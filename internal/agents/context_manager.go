@@ -5,6 +5,7 @@ import (
 
 	"github.com/voocel/agentcore"
 	corecontext "github.com/voocel/agentcore/context"
+	"github.com/voocel/ainovel-cli/internal/agents/ctxpack"
 )
 
 // contextManagerConfig tập hợp toàn bộ tham số cấu hình của ContextManager.
@@ -38,6 +39,7 @@ func newContextManager(cfg contextManagerConfig) *corecontext.ContextEngine {
 	strategies := []corecontext.Strategy{
 		corecontext.NewToolResultMicrocompact(tc),
 		corecontext.NewLightTrim(corecontext.LightTrimConfig{}),
+		ctxpack.NewKeepRewriteBriefStrategy(),
 	}
 	strategies = append(strategies, cfg.ExtraStrategies...)
 	strategies = append(strategies, corecontext.NewFullSummary(sc))

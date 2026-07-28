@@ -4,8 +4,17 @@ import (
 	"fmt"
 )
 
-// ReviewInterval khoảng cách kiểm duyệt toàn cục (kích hoạt mỗi N chương).
+// ReviewInterval khoảng cách kiểm duyệt toàn cục mặc định (kích hoạt mỗi N chương).
 const ReviewInterval = 5
+
+// GetReviewInterval trả về khoảng cách kiểm duyệt toàn cục dựa trên cấu hình.
+// Nếu configReviewInterval > 0, dùng giá trị đó; nếu không, dùng mặc định.
+func GetReviewInterval(configReviewInterval int) int {
+	if configReviewInterval > 0 {
+		return configReviewInterval
+	}
+	return ReviewInterval
+}
 
 // ShouldReview kiểm tra có cần kiểm duyệt toàn cục hay không dựa trên số chương đã hoàn thành (chế độ ngắn/trung).
 func ShouldReview(completedCount int) (bool, string) {

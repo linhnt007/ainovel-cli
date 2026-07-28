@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 )
@@ -216,6 +217,45 @@ func TestCheckpointStore_SeqNotConsumedOnWriteFailure(t *testing.T) {
 	}
 	if cp.Seq != 2 {
 		t.Fatalf("seq should not be consumed by failed append, want 2 got %d", cp.Seq)
+	}
+}
+
+func TestCheckpointStore_AppendArtifactRetrySuccess(t *testing.T) {
+	cs, dir := newTestCheckpointStore(t)
+	artPath := filepath.Join(dir, "transient.txt")
+	if err := os.WriteFile(artPath, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make it unreadable
+	_ = os.Chmod(artPath, 0000)
+
+	// In a goroutine, make it readable after 50ms
+	// Using a channel to coordinate if needed, but simple sleep is fine
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(50 * time.Millisecond)
+		_ = os.Chmod(artPath, 0o644)
+	}()
+
+	cp, err := cs.AppendArtifact(domain.GlobalScope(), "test", "transient.txt")
+	wg.Wait()
+
+	if err != nil {
+		t.Fatalf("AppendArtifact failed: %v", err)
+	}
+	if cp == nil {
+		t.Fatal("expected checkpoint, got nil")
+	}
+}
+
+func TestCheckpointStore_AppendArtifactPermanentError(t *testing.T) {
+	cs, _ := newTestCheckpointStore(t)
+	_, err := cs.AppendArtifact(domain.GlobalScope(), "test", "nonexistent.txt")
+	if err == nil {
+		t.Fatal("expected error on nonexistent file")
 	}
 }
 

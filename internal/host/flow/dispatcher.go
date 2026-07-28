@@ -38,6 +38,12 @@ type Dispatcher struct {
 	HumanGateEvery int
 	// Callback khi dừng tại mốc duyệt người dùng (human gate).
 	onHumanGate func(chapter int)
+
+	// QualityReviewInterval: khoảng cách kiểm duyệt toàn cục từ cấu hình (mỗi N chương). Mặc định 5.
+	QualityReviewInterval int
+
+	// onDegraded là callback khi dòng chảy nạp trạng thái bị suy giảm (có cảnh báo/lỗi IO)
+	onDegraded func(warnings []string)
 }
 
 // repeatNotifyAt cố định không đưa vào cấu hình: đây không phải ngưỡng luồng điều khiển (không kích hoạt hành động nào, chỉ là "gọi người"),
@@ -53,6 +59,11 @@ func NewDispatcher(coordinator *agentcore.Agent, store *storepkg.Store) *Dispatc
 // SetOnHumanGate đăng ký callback cho mốc duyệt người dùng.
 func (d *Dispatcher) SetOnHumanGate(cb func(chapter int)) {
 	d.onHumanGate = cb
+}
+
+// SetOnDegraded đăng ký callback cảnh báo suy giảm dòng chảy.
+func (d *Dispatcher) SetOnDegraded(cb func(warnings []string)) {
+	d.onDegraded = cb
 }
 
 // SetOnRepeat đăng ký callback telemetry cho lệnh lặp. Phải gọi một lần trước khi Attach/bắt đầu phát lệnh.
@@ -91,7 +102,11 @@ func (d *Dispatcher) handle(ev agentcore.Event) {
 // Dispatch tính toán tuyến đường ngay lập tức và gửi lệnh; Host có thể chủ động gọi vào thời điểm đặc biệt (ví dụ sau Resume).
 func (d *Dispatcher) Dispatch() {
 	state := LoadState(d.store)
+	if len(state.LoadWarnings) > 0 && d.onDegraded != nil {
+		d.onDegraded(state.LoadWarnings)
+	}
 	state.HumanGateEvery = d.HumanGateEvery
+	state.QualityReviewInterval = d.QualityReviewInterval
 	if state.LastCompleted > 0 && state.HumanGateEvery > 0 && state.LastCompleted%state.HumanGateEvery == 0 && !d.store.World.HasHumanGateAck(state.LastCompleted) {
 		state.HumanGatePending = true
 	}

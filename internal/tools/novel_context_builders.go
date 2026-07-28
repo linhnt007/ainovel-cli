@@ -21,6 +21,7 @@ type contextBuildState struct {
 	relationships   []domain.RelationshipEntry
 	allStateChanges []domain.StateChange
 	styleRules      *domain.WritingStyleRules
+	priorIssues     []domain.ConsistencyIssue
 }
 
 type chapterContextEnvelope struct {
@@ -303,6 +304,31 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 		} else if reviewErr != nil {
 			warn("rewrite_review", reviewErr)
 		}
+
+		var priorIssues []domain.ConsistencyIssue
+		for _, chap := range []int{chapter - 1, chapter - 2, chapter - 3} {
+			if chap < 1 {
+				continue
+			}
+			if rev, err := t.store.World.LoadReview(chap); err == nil && rev != nil {
+				for _, iss := range rev.Issues {
+					if iss.Severity == "error" || iss.Severity == "critical" {
+						priorIssues = append(priorIssues, iss)
+						if len(priorIssues) >= 10 {
+							break
+						}
+					}
+				}
+			}
+			if len(priorIssues) >= 10 {
+				break
+			}
+		}
+		if len(priorIssues) > 0 {
+			brief["prior_issues"] = priorIssues
+			state.priorIssues = priorIssues
+		}
+
 		envelope.Working["rewrite_brief"] = brief
 	}
 
@@ -476,6 +502,10 @@ func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope
 			}
 			envelope.Working["previous_tail"] = string(runes)
 		}
+	}
+
+	if len(state.priorIssues) > 0 {
+		envelope.Working["prior_issues"] = state.priorIssues
 	}
 }
 
