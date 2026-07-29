@@ -172,6 +172,16 @@ type chapterScore struct {
 	score   int
 }
 
+// SaveSelection lưu kết quả chọn draft (Best-of-N) vào meta/draft_selections/{ch}.json.
+func (s *DraftStore) SaveSelection(chapter int, data []byte) error {
+	return s.io.WriteFile(fmt.Sprintf("meta/draft_selections/%02d.json", chapter), data)
+}
+
+// LoadSelection tải kết quả chọn draft.
+func (s *DraftStore) LoadSelection(chapter int) ([]byte, error) {
+	return s.io.ReadFile(fmt.Sprintf("meta/draft_selections/%02d.json", chapter))
+}
+
 // ExtractStyleAnchors trích xuất các đoạn văn tiêu biểu từ các chương đã lưu chương làm điểm neo phong cách.
 // Ưu tiên chọn các chương có điểm aesthetic cao nhất từ các file review/đánh giá làm điểm neo phong cách (self-exemplar).
 // maxCompletedChapter được truyền từ phía gọi để tránh phụ thuộc chéo miền.

@@ -321,6 +321,7 @@ func (s *ProgressStore) SetFlow(flow domain.FlowState) error {
 
 // SetPendingRewrites đặt hàng đợi chương cần viết lại và lý do.
 // PendingRewrites chỉ được chứa các chương đã hoàn thành; chương chưa hoàn thành chưa có bản thảo cuối, không thể vào hàng đợi viết lại/trau chuốt.
+// Khi bước vào chu kỳ rewrite mới, xóa cờ NeedsRewriteReview (nếu có).
 func (s *ProgressStore) SetPendingRewrites(chapters []int, reason string) error {
 	return s.io.WithWriteLock(func() error {
 		p, err := s.loadUnlocked()
@@ -336,6 +337,7 @@ func (s *ProgressStore) SetPendingRewrites(chapters []int, reason string) error 
 		}
 		p.PendingRewrites = normalized
 		p.RewriteReason = reason
+		p.NeedsRewriteReview = 0 // vào chu kỳ rewrite mới, xóa cờ re-review
 		return s.saveUnlocked(p)
 	})
 }
@@ -358,6 +360,8 @@ func (s *ProgressStore) ValidatePendingRewrites(chapters []int) error {
 }
 
 // CompleteRewrite xóa chương đã hoàn thành khỏi hàng đợi viết lại.
+// Khi hàng đợi rút hết (remaining==0), đặt NeedsRewriteReview = chapter để router
+// dispatch editor re-review trước khi tiếp tục flow bình thường.
 func (s *ProgressStore) CompleteRewrite(chapter int) error {
 	return s.io.WithWriteLock(func() error {
 		p, err := s.loadUnlocked()
@@ -380,7 +384,23 @@ func (s *ProgressStore) CompleteRewrite(chapter int) error {
 			}
 			p.Flow = domain.FlowWriting
 			p.RewriteReason = ""
+			p.NeedsRewriteReview = chapter // hàng đợi rút hết → cần re-review chương này
 		}
+		return s.saveUnlocked(p)
+	})
+}
+
+// ClearRewriteReview xóa cờ NeedsRewriteReview (gọi khi editor re-review chấp nhận).
+func (s *ProgressStore) ClearRewriteReview() error {
+	return s.io.WithWriteLock(func() error {
+		p, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return nil
+		}
+		p.NeedsRewriteReview = 0
 		return s.saveUnlocked(p)
 	})
 }

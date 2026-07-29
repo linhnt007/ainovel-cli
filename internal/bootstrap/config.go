@@ -186,6 +186,9 @@ type Config struct {
 
 	// Quality cấu hình các cổng và tham số kiểm soát chất lượng.
 	Quality QualityConfig `json:"quality,omitzero"`
+
+	// LogPrompts bật ghi log chi tiết toàn bộ prompt gửi tới API của từng agent vào logs/prompts/
+	LogPrompts bool `json:"log_prompts,omitempty"`
 }
 
 // BudgetConfig là tuyên bố chính sách ngân sách của người dùng cho một cuốn sách. Dừng khi vượt giới hạn
@@ -214,6 +217,35 @@ func (n NotifyConfig) IsEnabled() bool { return n.Enabled == nil || *n.Enabled }
 type QualityConfig struct {
 	HumanGateEvery int `json:"human_gate_every,omitempty"`
 	ReviewInterval int `json:"review_interval,omitempty"` // Khoảng cách kiểm duyệt toàn cục (mỗi N chương). Mặc định 5.
+
+	// MaxDispatchRepeats: ngưỡng mềm cho circuit breaker. Khi cùng một lệnh được phát liên tiếp
+	// >= N lần, inject strong instruction buộc Coordinator chuyển sang agent khác hoặc dừng.
+	// 0 = disable (chỉ notify, không block). Mặc định 5.
+	MaxDispatchRepeats int `json:"max_dispatch_repeats,omitempty"`
+
+	// SteeringTimeout: số lần dispatch tối đa khi Flow=Steering trước khi auto-exit về FlowWriting.
+	// 0 = disable. Mặc định 3.
+	SteeringTimeout int `json:"steering_timeout,omitempty"`
+
+	// HumanGateTimeoutMinutes: thời gian chờ human gate trước khi auto-accept/auto-reject.
+	// 0 = không timeout (chờ vô hạn). Mặc định 0.
+	HumanGateTimeoutMinutes int `json:"human_gate_timeout_minutes,omitempty"`
+
+	// HumanGateAutoPassSeconds: thời gian chờ human gate tính bằng giây trước khi tự động duyệt.
+	// 0 = không auto-pass (chờ vô hạn, hoặc theo HumanGateTimeoutMinutes). Mặc định 0.
+	// Khi > 0, nếu user không phản hồi trong N giây → tự động ack gate.
+	HumanGateAutoPassSeconds int `json:"human_gate_auto_pass_seconds,omitempty"`
+
+	// LightGateEnabled: bật kiểm tra chất lượng nhẹ mỗi chương (word count, format, fatigue words).
+	// Mặc định true.
+	LightGateEnabled bool `json:"light_gate_enabled,omitempty"`
+
+	// LightGateTier2Interval: khoảng cách cho Tier 2 editor check (mỗi N chương). 0 = disable.
+	// Mặc định 5 (mỗi 5 chapters gọi editor 1 lần).
+	LightGateTier2Interval int `json:"light_gate_tier2_interval,omitempty"`
+
+	// StyleRepeatThreshold: ngưỡng cảnh báo lặp style. Mặc định 5.
+	StyleRepeatThreshold int `json:"style_repeat_threshold,omitempty"`
 }
 
 // ValidateBase kiểm tra cấu hình cơ bản.
@@ -223,6 +255,24 @@ func (c *Config) ValidateBase() error {
 	}
 	if c.Quality.ReviewInterval < 0 {
 		return fmt.Errorf("quality.review_interval must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Quality.MaxDispatchRepeats < 0 {
+		return fmt.Errorf("quality.max_dispatch_repeats must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Quality.SteeringTimeout < 0 {
+		return fmt.Errorf("quality.steering_timeout must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Quality.HumanGateTimeoutMinutes < 0 {
+		return fmt.Errorf("quality.human_gate_timeout_minutes must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Quality.HumanGateAutoPassSeconds < 0 {
+		return fmt.Errorf("quality.human_gate_auto_pass_seconds must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Quality.LightGateTier2Interval < 0 {
+		return fmt.Errorf("quality.light_gate_tier2_interval must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Quality.StyleRepeatThreshold < 0 {
+		return fmt.Errorf("quality.style_repeat_threshold must be >= 0: %w", errs.ErrConfig)
 	}
 
 	if err := validateConfigText("provider", c.Provider); err != nil {

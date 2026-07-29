@@ -28,6 +28,8 @@ type Store struct {
 	Sessions    *SessionStore
 	Usage       *UsageStore
 	Simulation  *SimulationStore
+	Checks      *CheckStore     // Light Gate: kết quả kiểm tra chất lượng chương
+	Notebooks   *NotebookStore  // Notebook: ghi chú của writer
 
 	crossMu sync.Mutex // bảo vệ các thao tác nguyên tử liên miền
 }
@@ -53,6 +55,8 @@ func NewStore(dir string) *Store {
 		Sessions:    NewSessionStore(newIO(dir)),
 		Usage:       NewUsageStore(newIO(dir)),
 		Simulation:  NewSimulationStore(newIO(dir)),
+		Checks:      NewCheckStore(newIO(dir)),
+		Notebooks:   NewNotebookStore(newIO(dir)),
 	}
 }
 
@@ -127,7 +131,7 @@ func (s *Store) FoundationMissing() []string {
 // Init tạo cấu trúc thư mục con cần thiết.
 func (s *Store) Init() error {
 	return s.Progress.io.EnsureDirs([]string{
-		"chapters", "summaries", "drafts", "reviews", "meta", "meta/runtime", "meta/runtime/tasks", "meta/sessions", "meta/sessions/agents",
+		"chapters", "summaries", "drafts", "reviews", "meta", "meta/runtime", "meta/runtime/tasks", "meta/sessions", "meta/sessions/agents", "meta/checks",
 	})
 }
 
@@ -245,8 +249,15 @@ func (s *Store) RollbackToChapter(target int) error {
 		return fmt.Errorf("chương %d chưa hoàn thành, không thể quay lui về chương này", target)
 	}
 
-	// Xóa file chương > target
-	for _, ch := range completed {
+	// Xóa file chương > target (và cả file draft dở dang của target+1)
+	toDelete := append([]int(nil), completed...)
+	if progress.InProgressChapter > 0 {
+		toDelete = append(toDelete, progress.InProgressChapter)
+	}
+	// Đảm bảo chương target+1 bị xoá draft/plan/chapter ngay cả khi chưa vào completed
+	toDelete = append(toDelete, target+1)
+
+	for _, ch := range toDelete {
 		if ch <= target {
 			continue
 		}
@@ -256,17 +267,6 @@ func (s *Store) RollbackToChapter(target int) error {
 		_ = s.Summaries.io.RemoveFile(fmt.Sprintf("summaries/%02d.json", ch))
 		_ = s.World.io.RemoveFile(fmt.Sprintf("reviews/%02d.json", ch))
 		_ = s.World.io.RemoveFile(fmt.Sprintf("reviews/%02d-global.json", ch))
-	}
-
-	// Xóa arc/volume summaries — đơn giản: xóa toàn bộ rồi để hệ thống tạo lại khi cần
-	if target == 0 {
-		volumes, _ := s.Outline.LoadLayeredOutline()
-		for _, v := range volumes {
-			for arc := 1; arc <= len(v.Arcs); arc++ {
-				_ = s.Summaries.io.RemoveFile(fmt.Sprintf("summaries/arc-v%02da%02d.json", v.Index, arc))
-			}
-			_ = s.Summaries.io.RemoveFile(fmt.Sprintf("summaries/vol-v%02d.json", v.Index))
-		}
 	}
 
 	// Xóa checkpoints và signals
@@ -316,17 +316,15 @@ func (s *Store) RollbackToChapter(target int) error {
 		p.RewriteReason = ""
 		p.ReopenedFromComplete = false
 		p.Flow = domain.FlowWriting
+		p.Phase = domain.PhaseWriting
+		p.CurrentChapter = target + 1
 
 		if target == 0 {
-			p.Phase = domain.PhaseOutline
-			p.CurrentChapter = 0
-			p.CurrentVolume = 0
-			p.CurrentArc = 0
+			p.CurrentVolume = 1
+			p.CurrentArc = 1
 			p.StrandHistory = nil
 			p.HookHistory = nil
 		} else {
-			p.Phase = domain.PhaseWriting
-			p.CurrentChapter = target + 1
 			// Trim strand/hook history
 			if len(p.StrandHistory) > target {
 				p.StrandHistory = p.StrandHistory[:target]

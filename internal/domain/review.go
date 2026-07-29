@@ -69,6 +69,11 @@ type ReviewEntry struct {
 	AestheticPolished bool   `json:"aesthetic_polished,omitempty"`  // đã polish MỘT lần vì aesthetic < ngưỡng => lần sau không nâng verdict nữa
 	QualityDebt       bool   `json:"quality_debt,omitempty"`        // bị ép accept sau khi chạm trần rewrite => gánh nợ chất lượng
 	QualityDebtReason string `json:"quality_debt_reason,omitempty"` // lý do gánh nợ (chạm trần vòng nào)
+
+	// ── Editor Consistency (B5) ──
+	// ReviewHash: hash của nội dung chapter được review. Nếu chapter không đổi → review cached,
+	// không dispatch lại editor. Tránh review trùng khi coordinator gọi lại cùng chapter.
+	ReviewHash string `json:"review_hash,omitempty"`
 }
 
 // CriticalCount trả về số lượng vấn đề ở mức độ critical.

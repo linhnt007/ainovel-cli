@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -17,9 +18,6 @@ import (
 //   - wordCount: số từ của chương (đếm theo từ tách khoảng trắng, xem CountWords). Nếu <0, checker tự tính để tránh caller quét O(n) lặp lại.
 //   - s: quy tắc có cấu trúc đã hợp nhất; nếu IsEmpty thì trả về nil luôn.
 func Check(text string, wordCount int, s Structured) []Violation {
-	if s.IsEmpty() {
-		return nil
-	}
 	if wordCount < 0 {
 		wordCount = CountWords(text)
 	}
@@ -29,7 +27,50 @@ func Check(text string, wordCount int, s Structured) []Violation {
 	violations = appendForbiddenPhrases(violations, text, s.ForbiddenPhrases)
 	violations = appendFatigueWords(violations, text, s.FatigueWords)
 	violations = appendChapterWords(violations, wordCount, s.ChapterWords)
+	violations = appendParagraphStyle(violations, text)
 	return violations
+}
+
+// paragraph_style: kiểm tra văn phong ngắt dòng cụt lủn.
+var sentenceSplitter = regexp.MustCompile(`[.!?。！？\n]+`)
+
+func appendParagraphStyle(vs []Violation, text string) []Violation {
+	paragraphs := strings.Split(text, "\n\n")
+	var validParagraphs []string
+	for _, p := range paragraphs {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			validParagraphs = append(validParagraphs, p)
+		}
+	}
+	if len(validParagraphs) < 5 {
+		return vs
+	}
+	singleSentenceCount := 0
+	for _, p := range validParagraphs {
+		sents := sentenceSplitter.Split(p, -1)
+		realSents := 0
+		for _, s := range sents {
+			s = strings.TrimSpace(s)
+			if len([]rune(s)) > 3 {
+				realSents++
+			}
+		}
+		if realSents <= 1 {
+			singleSentenceCount++
+		}
+	}
+	ratio := float64(singleSentenceCount) / float64(len(validParagraphs))
+	if ratio > 0.40 {
+		vs = append(vs, Violation{
+			Rule:     "paragraph_style",
+			Target:   "Quá nhiều đoạn văn 1 câu cụt lủn (cần ghép ít nhất 3 câu liên kết mỗi đoạn)",
+			Limit:    "≤ 40% đoạn 1 câu",
+			Actual:   fmt.Sprintf("%.1f%% đoạn 1 câu (%d/%d)", ratio*100, singleSentenceCount, len(validParagraphs)),
+			Severity: SeverityWarning,
+		})
+	}
+	return vs
 }
 
 // forbidden_chars: xuất hiện ≥1 lần là error.
@@ -96,11 +137,6 @@ func appendFatigueWords(vs []Violation, text string, m map[string]int) []Violati
 }
 
 // chapter_words: độ lệch số từ.
-// Luôn là warning bất kể độ lệch bao nhiêu — không nâng lên error để tránh chặn cứng commit_chapter
-// và ép Writer vào vòng lặp viết lại vô ích khi ngưỡng cấu hình (chapter_words) bị hiệu chỉnh sai hoặc
-// lệch giữa ngôn ngữ. ChapterWordsDeviationThreshold vẫn giữ để tham khảo/hiển thị mức độ lệch, không
-// còn quyết định severity. Chỉ forbidden_chars/forbidden_phrases mới có severity error.
-// Công thức độ lệch: thấp hơn min dùng (min-actual)/min; cao hơn max dùng (actual-max)/max.
 func appendChapterWords(vs []Violation, wordCount int, rng *WordRange) []Violation {
 	if rng == nil {
 		return vs
@@ -138,3 +174,4 @@ func appendChapterWords(vs []Violation, wordCount int, rng *WordRange) []Violati
 func CountWords(text string) int {
 	return len(strings.Fields(text))
 }
+

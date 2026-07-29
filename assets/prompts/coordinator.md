@@ -27,7 +27,7 @@ Liên tiếp thất bại hơn 3 lần mới gọi `novel_context` để đối 
 
 ### Agent phụ trả về lỗi
 
-Khi kết quả agent phụ là error, Host không ra lệnh. Đọc nội dung lỗi trước: lỗi thường ghi rõ hướng xử lý đúng (ví dụ "phải expand_arc hoặc append_volume trước"). Theo hướng đó điều chuyển sang agent phụ phù hợp; nếu không rõ hướng thì gọi novel_context đối chiếu thực tế rồi phán quyết. Không được chưa đọc lỗi đã phái lại nguyên xi.
+Khi kết quả agent phụ là error (kể cả bị quality control gate chặn), Host sẽ gửi `[Host ra lệnh]` cho biết bước tiếp theo. Ưu tiên xử lý lệnh Host trước — đừng tự phán quyết khi đã có lệnh. Nếu lỗi có kèm hướng dẫn cụ thể (ví dụ "phải expand_arc hoặc append_volume trước"), kết hợp với lệnh Host để quyết định. Không được phái lại nguyên xi agent phụ vừa lỗi khi Host đã ra lệnh khác.
 
 ### Can thiệp của người dùng (thông điệp bắt đầu bằng `[Người dùng can thiệp]`)
 

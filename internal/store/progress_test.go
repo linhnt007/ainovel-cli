@@ -263,6 +263,95 @@ func TestCompleteRewrite_NotInQueue(t *testing.T) {
 	}
 }
 
+func TestCompleteRewrite_SetsNeedsRewriteReview(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	_ = store.Progress.Init("test", 10)
+	_ = store.Progress.MarkChapterComplete(2, 3000, "", "")
+	_ = store.Progress.SetPendingRewrites([]int{2}, "测试")
+	_ = store.Progress.SetFlow(domain.FlowRewriting)
+
+	// Hoàn thành chương cuối cùng trong hàng đợi → đặt NeedsRewriteReview
+	if err := store.Progress.CompleteRewrite(2); err != nil {
+		t.Fatalf("CompleteRewrite(2): %v", err)
+	}
+	p, _ := store.Progress.Load()
+	if p.NeedsRewriteReview != 2 {
+		t.Fatalf("expected NeedsRewriteReview=2, got %d", p.NeedsRewriteReview)
+	}
+	if p.Flow != domain.FlowWriting {
+		t.Errorf("flow should reset to writing, got %s", p.Flow)
+	}
+}
+
+func TestCompleteRewrite_PartialDoesNotSetFlag(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	_ = store.Progress.Init("test", 10)
+	_ = store.Progress.MarkChapterComplete(2, 3000, "", "")
+	_ = store.Progress.MarkChapterComplete(3, 3000, "", "")
+	_ = store.Progress.SetPendingRewrites([]int{2, 3}, "测试")
+	_ = store.Progress.SetFlow(domain.FlowRewriting)
+
+	// Hoàn thành 1 trong 2 chương → chưa đặt NeedsRewriteReview
+	_ = store.Progress.CompleteRewrite(2)
+	p, _ := store.Progress.Load()
+	if p.NeedsRewriteReview != 0 {
+		t.Fatalf("expected NeedsRewriteReview=0 (queue not empty), got %d", p.NeedsRewriteReview)
+	}
+}
+
+func TestSetPendingRewrites_ClearsNeedsRewriteReview(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	_ = store.Progress.Init("test", 10)
+	_ = store.Progress.MarkChapterComplete(2, 3000, "", "")
+	_ = store.Progress.MarkChapterComplete(3, 3000, "", "")
+
+	// Đặt cờ NeedsRewriteReview trước
+	p, _ := store.Progress.Load()
+	p.NeedsRewriteReview = 2
+	_ = store.Progress.Save(p)
+
+	// SetPendingRewrites phải xóa cờ
+	if err := store.Progress.SetPendingRewrites([]int{3}, "新重写"); err != nil {
+		t.Fatalf("SetPendingRewrites: %v", err)
+	}
+	p, _ = store.Progress.Load()
+	if p.NeedsRewriteReview != 0 {
+		t.Fatalf("expected NeedsRewriteReview=0 after SetPendingRewrites, got %d", p.NeedsRewriteReview)
+	}
+}
+
+func TestClearRewriteReview(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	_ = store.Progress.Init("test", 10)
+
+	// Đặt cờ
+	p, _ := store.Progress.Load()
+	p.NeedsRewriteReview = 5
+	_ = store.Progress.Save(p)
+
+	// ClearRewriteReview xóa cờ
+	if err := store.Progress.ClearRewriteReview(); err != nil {
+		t.Fatalf("ClearRewriteReview: %v", err)
+	}
+	p, _ = store.Progress.Load()
+	if p.NeedsRewriteReview != 0 {
+		t.Fatalf("expected NeedsRewriteReview=0 after clear, got %d", p.NeedsRewriteReview)
+	}
+}
+
+func TestClearRewriteReview_NilProgress(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	// Không Init → progress nil → ClearRewriteReview không lỗi
+	if err := store.Progress.ClearRewriteReview(); err != nil {
+		t.Fatalf("ClearRewriteReview on nil progress: %v", err)
+	}
+}
+
 func TestClearPendingRewrites(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)

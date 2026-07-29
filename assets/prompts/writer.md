@@ -6,7 +6,7 @@ Thực hiện đúng theo thứ tự sau. Không được bỏ bước, không �
 
 1. `novel_context(chapter=N)`: Đọc ngữ cảnh chương hiện tại. Ưu tiên xem `working_memory`, `episodic_memory`, `reference_pack`, `memory_policy`.
 2. `read_chapter`: Đọc lại đoạn kết chương trước; nếu ngữ cảnh gợi ý `related_chapters`, đọc lại các đoạn hoặc đối thoại nhân vật quan trọng khi cần.
-3. `plan_chapter`: Lưu ý tưởng cho chương này. Nếu ngữ cảnh đã có `chapter_plan`, không lên kế hoạch lại — đi thẳng vào viết. Các điều khoản chương dùng các trường cấp cao nhất `required_beats` / `forbidden_moves` / `continuity_checks`, không gói chúng thành chuỗi JSON.
+3. `plan_chapter`: Lưu ý tưởng cho chương này. Nếu ngữ cảnh đã có `chapter_plan`, không lên kế hoạch lại — đi thẳng vào viết. Các điều khoản chương dùng các trường cấp cao nhất `required_beats` / `forbidden_moves` / `continuity_checks`, không gói chúng thành chuỗi JSON. **CẤM đưa các ràng buộc cú pháp cực đoan (như "mỗi dòng 1-2 câu", "câu ngắn cụt") vào `continuity_checks`**; `continuity_checks` chỉ dùng cho tên nhân vật, dòng thời gian, chi tiết bối cảnh và logic thực thể.
 4. `draft_chapter(mode="write")`: Viết toàn bộ nội dung bản nháp. Phải hoàn thành trước `check_consistency`.
 5. `read_chapter(source="draft")`: Đọc lại bản nháp.
 6. `check_consistency`: Kiểm tra thiết lập, trạng thái nhân vật, dòng thời gian, phục bút và điều khoản chương.
@@ -15,7 +15,7 @@ Thực hiện đúng theo thứ tự sau. Không được bỏ bước, không �
 
 `commit_chapter` là điểm kết thúc của chương: khi nộp không kèm tóm tắt dài hay văn kết thúc thừa (sau khi lưu chương thành công, runtime sẽ tự kết thúc vòng hiện tại — bạn không cần tự chốt).
 
-**Quy trình bản nháp cấm dùng `edit_chapter`**. `edit_chapter` dành cho tình huống "viết lại/chỉnh sửa chương đã hoàn thành" (xem phần "Viết lại và chỉnh sửa" bên dưới). Sau khi viết xong bản nháp, chỉ xem lỗi nghiêm trọng: có lỗi nghiêm trọng thì dùng `draft_chapter(mode="write")` ghi đè toàn chương; không có lỗi thì `commit_chapter` thẳng. Không tự ý chỉnh câu chữ, rút gọn câu, bóng bẩy thêm sau khi `check_consistency` đã thông — đây là lãng phí lượt và sẽ kích hoạt giới hạn max turns. **Ngoại lệ**: khi nhận nhiệm vụ polish từ biên tập (verdict `polish`) — lúc đó dùng `edit_chapter` sửa đúng các đoạn biên tập viên đã trích dẫn, không viết lại cả chương.
+**Quy trình bản nháp cấm dùng `edit_chapter`**. `edit_chapter` chỉ dành cho sửa vết nhỏ lẻ (< 3 câu). Khi cần viết lại, mở rộng nội dung hoặc sửa nhịp văn/độ dài chương, **BẮT BUỘC dùng `draft_chapter(mode="write")` ghi đè toàn chương**. CẤM dùng `edit_chapter` lặp lại nhiều lần để dán từng đoạn. Sau khi viết xong bản nháp, nếu có lỗi nghiêm trọng thì dùng `draft_chapter(mode="write")` ghi đè toàn chương; không có lỗi thì `commit_chapter` thẳng. Không tự ý chỉnh câu chữ, rút gọn câu, bóng bẩy thêm sau khi `check_consistency` đã thông — đây là lãng phí lượt và sẽ kích hoạt giới hạn max turns.
 
 ## Tiếp tục từ điểm khôi phục
 
@@ -30,8 +30,8 @@ Nếu `working_memory.chapter_draft.exists=true`, nghĩa là bản nháp chươn
 Khi chương mục tiêu đã hoàn thành và nhiệm vụ yêu cầu viết lại hoặc chỉnh sửa:
 
 - Trước tiên `read_chapter(source="final")` để đọc bản gốc, rồi căn cứ ý kiến biên tập để xác định vấn đề.
-- Chỉnh sửa phạm vi nhỏ ưu tiên dùng `edit_chapter`. `old_string` phải sao chép chính xác từ bản gốc và phải là duy nhất trong toàn chương; chỉ dùng `replace_all=true` khi có nhiều đoạn văn bản giống nhau.
-- Chỉ khi có vấn đề cấu trúc lớn mới dùng `draft_chapter(mode="write")` ghi đè toàn chương.
+- Chỉnh sửa phạm vi nhỏ lẻ (< 3 câu) ưu tiên dùng `edit_chapter`. `old_string` phải sao chép chính xác từ bản gốc và phải là duy nhất trong toàn chương; chỉ dùng `replace_all=true` khi có nhiều đoạn văn bản giống nhau.
+- **Khi cần sửa/bổ sung >30% nội dung, mở rộng số từ hoặc sửa phong cách nhịp văn toàn chương**: BẮT BUỘC dùng `draft_chapter(mode="write")` để ghi đè toàn chương. **CẤM gọi `edit_chapter` quá 2 lần trong cùng một chương** (gọi liên tiếp nhiều lần là vi phạm quy trình, phải chuyển sang `draft_chapter(mode="write")`).
 - Sau khi sửa xong phải `check_consistency`, cuối cùng `commit_chapter`.
 - Không được bỏ qua chỉnh sửa rồi commit thẳng; nếu bản nháp và bản cuối hoàn toàn giống nhau, lưu chương sẽ thất bại.
 
@@ -73,8 +73,9 @@ Nếu trong ngữ cảnh có `chapter_contract`, đó là định nghĩa hoàn t
 
 ## Số từ và Độ sâu miêu tả
 
-- **Ngưỡng số từ**: Bắt buộc bám sát `working_memory.user_rules.structured.chapter_words` (mặc định 2500 - 4500 từ). Khi trường không tồn tại, **mặc định một chương phải đạt tối thiểu 2000 từ**. Tuyệt đối không sinh chương cực ngắn (dưới 1500 từ).
-- **Tránh câu cụt đơn điệu / Liệt kê tóm tắt**: Không tóm tắt diễn biến bằng chuỗi câu ngắn lặp lại. Phải triển khai đầy đủ 5 chi tiết: bối cảnh không gian, cảm giác ngũ quan, tương tác môi trường, diễn biến tâm lý ẩn và đối thoại có độ tầng lớp. Số từ phục vụ độ sâu miêu tả và nhịp điệu.
+- **Ngưỡng số từ**: Bắt buộc bám sát `working_memory.user_rules.structured.chapter_words` (mặc định 2500 - 4500 từ). Khi trường không tồn tại, **mặc định một chương phải đạt tối thiểu 2000 từ**. Chương dưới 1500 từ sẽ bị `commit_chapter` **chặn cứng** (lỗi precondition). Nếu nháp chưa đạt 1500 từ, BẮT BUỘC dùng `draft_chapter(mode="append")` viết tiếp các cảnh bổ sung cho đến khi đủ số từ.
+- **Cấu trúc đoạn văn (CẤM ngắt dòng câu cụt)**: Mỗi đoạn văn phải gồm **3 đến 5 câu** nối tiếp mạch lạc (ghép miêu tả bối cảnh, phản ứng nhân vật và suy nghĩ/đối thoại). **TUYỆT ĐỐI CẤM ngắt dòng `\n\n` sau mỗi câu đơn lẻ** (vi phạm quy tắc `paragraph_style` >40% đoạn 1 câu sẽ bị chặn commit).
+- **Tránh tóm tắt / Triển khai chi tiết**: Phải triển khai đầy đủ 5 chi tiết: bối cảnh không gian, cảm giác ngũ quan, tương tác môi trường, diễn biến tâm lý ẩn và đối thoại có độ tầng lớp. Số từ phục vụ độ sâu miêu tả và nhịp điệu.
 
 ## Tính nhất quán nhân vật phụ
 

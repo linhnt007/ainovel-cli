@@ -126,7 +126,7 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 		return result, nil
 	}
 	passthrough["chapter"] = a.Chapter
-	passthrough["next_step"] = "edit đã ghi đĩa. Nếu còn lỗi nghiêm trọng có thể gọi lại edit_chapter; nếu không hãy check_consistency rồi commit_chapter"
+	passthrough["next_step"] = "Edit đã ghi đĩa (chú ý: edit_chapter chỉ dùng cho sửa lẻ <3 câu; nếu sửa/thêm >30% nội dung hoặc mở rộng số từ, bắt buộc dùng draft_chapter(mode=write) viết lại toàn chương). Nếu sửa xong hãy check_consistency rồi commit_chapter."
 	return json.Marshal(passthrough)
 }
 

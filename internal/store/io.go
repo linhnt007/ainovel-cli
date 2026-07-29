@@ -91,6 +91,12 @@ func (io *IO) WriteJSONUnlocked(rel string, v any) error {
 	return io.WriteFileUnlocked(rel, data)
 }
 
+func (io *IO) WriteFile(rel string, data []byte) error {
+	io.mu.Lock()
+	defer io.mu.Unlock()
+	return io.WriteFileUnlocked(rel, data)
+}
+
 func (io *IO) WriteMarkdown(rel string, content string) error {
 	io.mu.Lock()
 	defer io.mu.Unlock()

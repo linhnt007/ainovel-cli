@@ -8,17 +8,24 @@ import (
 	"github.com/voocel/agentcore/schema"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/errs"
+	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 // CheckConsistencyTool trả về nội dung chương và toàn bộ dữ liệu trạng thái để Agent tự đối chiếu kiểm tra.
 // Công cụ IO thuần túy: chỉ chịu trách nhiệm tải dữ liệu, không chèn chỉ thị.
 type CheckConsistencyTool struct {
-	store *store.Store
+	store     *store.Store
+	rulesOpts rules.LoadOptions
 }
 
 func NewCheckConsistencyTool(store *store.Store) *CheckConsistencyTool {
 	return &CheckConsistencyTool{store: store}
+}
+
+func (t *CheckConsistencyTool) WithRules(opts rules.LoadOptions) *CheckConsistencyTool {
+	t.rulesOpts = opts
+	return t
 }
 
 func (t *CheckConsistencyTool) Name() string { return "check_consistency" }
@@ -37,7 +44,7 @@ func (t *CheckConsistencyTool) Schema() map[string]any {
 	)
 }
 
-func (t *CheckConsistencyTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+func (t *CheckConsistencyTool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 	var a struct {
 		Chapter int `json:"chapter"`
 	}
@@ -60,6 +67,10 @@ func (t *CheckConsistencyTool) Execute(_ context.Context, args json.RawMessage) 
 	}
 	result["content"] = content
 	result["word_count"] = wordCount
+
+	// Kiểm tra các quy tắc cơ học (Lint, word count, lặp từ...)
+	violations := checkRules(ctx, t.store, t.rulesOpts, content, wordCount)
+	result["rule_violations"] = violations
 
 	// Dữ liệu đối chiếu: giữ lại dữ liệu kiểm tra nhất quán toàn cục, tránh tải lại dữ liệu đã có trong cửa sổ ngữ cảnh của novel_context
 	if rules, _ := t.store.World.LoadWorldRules(); len(rules) > 0 {

@@ -68,6 +68,13 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	if r.Chapter <= 0 {
 		return nil, fmt.Errorf("chapter must be > 0")
 	}
+	// Chuẩn hóa tên các chiều (loại bỏ dấu hai chấm, khoảng trắng thừa do LLM tự thêm)
+	for i := range r.Dimensions {
+		r.Dimensions[i].Dimension = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(r.Dimensions[i].Dimension), ":"))
+	}
+	for i := range r.Issues {
+		r.Issues[i].Type = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(r.Issues[i].Type), ":"))
+	}
 	// verdict là hàm thuần túy của score (≥80 pass / ≥60 warning / <60 fail), được suy luận xác định bởi code —
 	// không để LLM cung cấp lại rồi kiểm tra tính nhất quán. Vừa loại bỏ dư thừa, vừa triệt tiêu
 	// mâu thuẫn kiểu "score=85 nhưng lại cho warning".
@@ -190,6 +197,13 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	} else {
 		if err := t.store.Progress.SetFlow(domain.FlowWriting); err != nil {
 			return nil, fmt.Errorf("set flow writing: %w", err)
+		}
+		// Nếu editor đang re-review chương được đánh dấu bởi NeedsRewriteReview và verdict là accept,
+		// xóa cờ để router tiếp tục flow bình thường (gate / next chapter).
+		if progress != nil && progress.NeedsRewriteReview == r.Chapter {
+			if err := t.store.Progress.ClearRewriteReview(); err != nil {
+				return nil, fmt.Errorf("clear rewrite review: %w", err)
+			}
 		}
 	}
 

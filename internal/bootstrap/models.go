@@ -2,12 +2,16 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -117,9 +121,9 @@ type ModelSet struct {
 // đó cũng được ForRoleWithFailover dùng làm primary bên trong failoverModel.
 func (ms *ModelSet) ForRole(role string) agentcore.ChatModel {
 	if m, ok := ms.models[role]; ok {
-		return &singleTargetModel{m}
+		return ms.wrapLogger(role, &singleTargetModel{m})
 	}
-	return &singleTargetModel{ms.Default}
+	return ms.wrapLogger(role, &singleTargetModel{ms.Default})
 }
 
 // ForRoleWithFailover trả về mô hình vai trò có fallback cấp độ từng yêu cầu.
@@ -127,11 +131,11 @@ func (ms *ModelSet) ForRole(role string) agentcore.ChatModel {
 func (ms *ModelSet) ForRoleWithFailover(role string, report FailoverReporter) agentcore.ChatModel {
 	primary, ok := ms.models[role]
 	if !ok {
-		return &singleTargetModel{ms.Default}
+		return ms.wrapLogger(role, &singleTargetModel{ms.Default})
 	}
 	targets := ms.fallbacks[role]
 	if len(targets) == 0 {
-		return &singleTargetModel{primary}
+		return ms.wrapLogger(role, &singleTargetModel{primary})
 	}
 	pProvider, pName := primary.Current()
 	var cleanTargets []modelTarget
@@ -145,14 +149,14 @@ func (ms *ModelSet) ForRoleWithFailover(role string, report FailoverReporter) ag
 		cleanTargets = append(cleanTargets, t)
 	}
 	if len(cleanTargets) == 0 {
-		return &singleTargetModel{primary}
+		return ms.wrapLogger(role, &singleTargetModel{primary})
 	}
-	return &failoverModel{
+	return ms.wrapLogger(role, &failoverModel{
 		role:      role,
 		primary:   primary,
 		fallbacks: cleanTargets,
 		report:    report,
-	}
+	})
 }
 
 // Summary trả về tóm tắt phân bổ mô hình (dùng cho log).
@@ -781,4 +785,70 @@ func usageTokens(u *agentcore.Usage) int {
 		return u.TotalTokens
 	}
 	return u.Input + u.Output
+}
+
+var globalPromptCounter uint64
+
+type promptLoggingModel struct {
+	agentcore.ChatModel
+	role      string
+	outputDir string
+	enabled   bool
+}
+
+func (m *promptLoggingModel) isEnabled() bool {
+	if m.enabled {
+		return true
+	}
+	v := strings.ToLower(os.Getenv("AINOVEL_LOG_PROMPTS"))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func (m *promptLoggingModel) logPrompt(messages []agentcore.Message, tools []agentcore.ToolSpec) {
+	if !m.isEnabled() {
+		return
+	}
+	outDir := m.outputDir
+	if outDir == "" {
+		outDir = "workspace/output/novel"
+	}
+	promptDir := filepath.Join(outDir, "logs", "prompts", m.role)
+	if err := os.MkdirAll(promptDir, 0o755); err != nil {
+		return
+	}
+	seq := atomic.AddUint64(&globalPromptCounter, 1)
+	filename := filepath.Join(promptDir, fmt.Sprintf("%s_%04d.json", time.Now().Format("150405_000"), seq))
+
+	payload := map[string]any{
+		"time":     time.Now().Format(time.RFC3339),
+		"role":     m.role,
+		"seq":      seq,
+		"messages": messages,
+		"tools":    tools,
+	}
+
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filename, data, 0o644)
+}
+
+func (m *promptLoggingModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	m.logPrompt(messages, tools)
+	return m.ChatModel.Generate(ctx, messages, tools, opts...)
+}
+
+func (m *promptLoggingModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
+	m.logPrompt(messages, tools)
+	return m.ChatModel.GenerateStream(ctx, messages, tools, opts...)
+}
+
+func (ms *ModelSet) wrapLogger(role string, m agentcore.ChatModel) agentcore.ChatModel {
+	return &promptLoggingModel{
+		ChatModel: m,
+		role:      role,
+		outputDir: ms.config.OutputDir,
+		enabled:   ms.config.LogPrompts,
+	}
 }

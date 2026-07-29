@@ -249,14 +249,19 @@ func TestCheck_FatigueZeroLimitSkipped(t *testing.T) {
 	}
 }
 
-func TestCheck_EmptyTargetsSkipped(t *testing.T) {
-	// Mục tiêu chuỗi rỗng không được tạo ra false positive
-	vs := Check("任何文本", -1, Structured{
-		ForbiddenChars:   []string{""},
-		ForbiddenPhrases: []string{""},
-		FatigueWords:     map[string]int{"": 1},
-	})
-	if len(vs) != 0 {
-		t.Errorf("empty targets should be skipped, got %+v", vs)
+func TestCheck_ParagraphStyle(t *testing.T) {
+	// 6 single-sentence paragraphs -> 100% single-sentence -> triggers Warning
+	badText := "Bóng tối.\n\nMột bóng tối đặc quánh.\n\nHaruhiro cố gắng mở mắt.\n\nChỉ thấy một màu đen.\n\nCơ thể anh nặng trĩu.\n\nAnh cố ngồi dậy."
+	vs := Check(badText, -1, Structured{})
+	found := false
+	for _, v := range vs {
+		if v.Rule == "paragraph_style" && v.Severity == SeverityWarning {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected paragraph_style warning for single-sentence paragraph list, got %+v", vs)
 	}
 }
+

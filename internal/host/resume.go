@@ -27,6 +27,16 @@ func buildResumePrompt(store *storepkg.Store) (string, string, error) {
 		return "", "", nil
 	}
 
+	if progress.Phase == domain.PhaseOutline {
+		if vols, _ := store.Outline.LoadLayeredOutline(); len(vols) > 0 {
+			progress.Phase = domain.PhaseWriting
+			if progress.CurrentChapter <= 0 {
+				progress.CurrentChapter = 1
+			}
+			_ = store.Progress.Save(progress)
+		}
+	}
+
 	label := describeResume(store, progress)
 
 	var b strings.Builder

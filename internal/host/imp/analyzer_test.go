@@ -117,8 +117,8 @@ func TestPersistChapter_FullPipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	commitTool := tools.NewCommitChapterTool(st)
-	body := "林晚翻开匿名信，发现一行潦草字迹...\n\n（正文略，>500 字以让 LoadChapterContent 通过校验）"
-	body = strings.Repeat(body, 10) // ghép đủ số từ
+	body := "林晚翻开匿名信, 发现一行潦草字迹. 这是一个 key moment in the story. 详细内容需要深入 investigate.\n\n"
+	body = strings.Repeat(body, 10) // ghép đủ số từ và đủ số câu mỗi đoạn
 
 	if err := PersistChapter(context.Background(), st, commitTool, 1, "初遇", body, a); err != nil {
 		t.Fatalf("PersistChapter: %v", err)

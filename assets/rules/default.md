@@ -13,7 +13,7 @@
 
 # Giới hạn số từ mỗi chương (đếm TỪ THẬT, tách theo khoảng trắng — không phải đếm ký tự/rune):
 # luôn cảnh báo (warning) khi lệch khỏi phạm vi, khuyến nghị 2000-5000 từ để đảm bảo độ sâu miêu tả.
-chapter_words: 2000-5000
+chapter_words: 2500-6000
 
 # Danh sách cụm từ cấm: xuất hiện ≥1 lần là error. Bộ kiểm tra so khớp chuỗi con
 # theo nghĩa đen, không hỗ trợ wildcard, nên chỉ đặt các câu sáo rỗng AI "chuỗi cố định"

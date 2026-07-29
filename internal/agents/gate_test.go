@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/voocel/agentcore"
+	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
@@ -91,5 +92,54 @@ func TestCompletePhaseGate_AllowsWhenNoProgress(t *testing.T) {
 	}
 	if decision != nil && !decision.Allowed {
 		t.Fatal("expected gate to allow when progress is nil")
+	}
+}
+
+func TestQualityControlGate_BlocksHumanGatePending(t *testing.T) {
+	st := newTestStore(t)
+	p, _ := st.Progress.Load()
+	p.CompletedChapters = []int{1}
+	_ = st.Progress.Save(p)
+
+	cfg := bootstrap.Config{}
+	cfg.Quality.HumanGateEvery = 1
+
+	gate := qualityControlGate(st, cfg)
+	decision, err := gate(context.Background(), subagentCall(`{"agent":"writer","task":"Viết chương 2"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision == nil || decision.Allowed {
+		t.Fatal("expected qualityControlGate to block subagent call when HumanGatePending=true")
+	}
+}
+
+func TestQualityControlGate_BlocksWriterOnPendingReview(t *testing.T) {
+	st := newTestStore(t)
+	p, _ := st.Progress.Load()
+	p.CompletedChapters = []int{1}
+	_ = st.Progress.Save(p)
+
+	cfg := bootstrap.Config{}
+	cfg.Quality.ReviewInterval = 1
+
+	gate := qualityControlGate(st, cfg)
+
+	// Writer call bị chặn
+	decWriter, err := gate(context.Background(), subagentCall(`{"agent":"writer","task":"Viết chương 2"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decWriter == nil || decWriter.Allowed {
+		t.Fatal("expected qualityControlGate to block writer when HasPendingFlatReview=true")
+	}
+
+	// Editor call cho phép
+	decEditor, err := gate(context.Background(), subagentCall(`{"agent":"editor","task":"Review"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decEditor != nil && !decEditor.Allowed {
+		t.Fatal("expected qualityControlGate to ALLOW editor when HasPendingFlatReview=true")
 	}
 }

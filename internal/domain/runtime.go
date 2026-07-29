@@ -23,6 +23,16 @@ const (
 	FlowSteering  FlowState = "steering"
 )
 
+// StopReason lý do dừng phiên sáng tác, dùng cho circuit breaker và timeout.
+type StopReason string
+
+const (
+	StopReasonNone      StopReason = ""
+	StopReasonLivelock  StopReason = "livelock"   // circuit breaker: lặp lại quá nhiều
+	StopReasonSteering  StopReason = "steering"   // steering timeout: can thiệp quá lâu
+	StopReasonHumanGate StopReason = "human_gate" // human gate timeout
+)
+
 // PlanningTier biểu thị cấp độ độ dài trong kế hoạch tác phẩm.
 type PlanningTier string
 
@@ -58,6 +68,9 @@ type Progress struct {
 	// writing → viết vượt phạm vi sau khi phục bút bị xáo trộn); viết thuận chiều không đặt cờ này,
 	// điều kiện hoàn chỉnh vẫn giữ ngữ nghĩa bảo thủ là thu gọn mạch truyện.
 	ReopenedFromComplete bool `json:"reopened_from_complete,omitempty"`
+	// NeedsRewriteReview: chương cần đánh giá lại sau khi viết lại xong (hàng đợi PendingRewrites đã rút hết).
+	// Router step 3.5 sẽ dispatch editor re-review trước khi tiếp tục flow bình thường.
+	NeedsRewriteReview int `json:"needs_rewrite_review,omitempty"`
 }
 
 // IsResumable kiểm tra xem có thể tiếp tục từ điểm ngắt hay không.

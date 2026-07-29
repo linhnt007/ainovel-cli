@@ -362,6 +362,49 @@ func TestDispatcher_OnRepeatFiresOnceAtThreshold(t *testing.T) {
 	}
 }
 
+func TestRoute_NeedsRewriteReview(t *testing.T) {
+	// NeedsRewriteReview=2, không có PendingRewrites → editor re-review chương 2
+	p := writingProgress([]int{1, 2}, domain.FlowWriting)
+	p.NeedsRewriteReview = 2
+	got := Route(State{Progress: p})
+	if got == nil || got.Agent != "editor" {
+		t.Fatalf("expected editor for rewrite review, got %+v", got)
+	}
+	if got.Task != "Đánh giá lại chương 2 sau viết lại (scope=chapter)" {
+		t.Errorf("task mismatch: %q", got.Task)
+	}
+	if got.Chapter != 0 {
+		t.Errorf("editor task should have Chapter=0, got %d", got.Chapter)
+	}
+}
+
+func TestRoute_PendingRewritesBeforeNeedsReview(t *testing.T) {
+	// PendingRewrites=[3] + NeedsRewriteReview=2 → step 3 thắng (writer ch3)
+	p := writingProgress([]int{1, 2}, domain.FlowRewriting)
+	p.PendingRewrites = []int{3}
+	p.NeedsRewriteReview = 2
+	got := Route(State{Progress: p})
+	if got == nil || got.Agent != "writer" {
+		t.Fatalf("expected writer (step 3 wins), got %+v", got)
+	}
+	if got.Chapter != 3 {
+		t.Errorf("expected Chapter=3, got %d", got.Chapter)
+	}
+}
+
+func TestRoute_NeedsRewriteReviewZeroFallsThrough(t *testing.T) {
+	// NeedsRewriteReview=0 → không trigger step 3.5, tiếp tục flow bình thường
+	p := writingProgress([]int{1, 2}, domain.FlowWriting)
+	p.TotalChapters = 10
+	got := Route(State{Progress: p, LastCompleted: 2})
+	if got == nil || got.Agent != "writer" {
+		t.Fatalf("expected writer for next chapter, got %+v", got)
+	}
+	if got.Task != "Viết chương 3" {
+		t.Errorf("expected 'Viết chương 3', got %q", got.Task)
+	}
+}
+
 func TestRoute_LoadWarningsFallback(t *testing.T) {
 	t.Run("nil progress but has warnings", func(t *testing.T) {
 		s := State{

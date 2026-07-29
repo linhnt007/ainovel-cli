@@ -308,11 +308,11 @@ func commandRegistryInstance() commandRegistry {
 				}
 
 				// Xóa sự kiện và stream TUI
-				m.events = nil
-				m.eventIndex = nil
-				m.streamRounds = nil
-				m.mode = modeNew
-				m.textarea.Placeholder = placeholderForNewMode(startupModeQuick)
+				m.resetOutputPanels()
+				m.mode = modeRunning
+				enableMouse := m.enterRunning()
+				m.resizeTextarea()
+				m.textarea.Placeholder = defaultSteerPlaceholder()
 				m.textarea.Reset()
 				m.textarea.Focus()
 
@@ -321,7 +321,7 @@ func commandRegistryInstance() commandRegistry {
 				m.refreshStreamViewport()
 				m.refreshDetailViewport()
 				m.refreshStateViewport()
-				return m, nil
+				return m, enableMouse
 			},
 		},
 		{
@@ -338,6 +338,9 @@ func commandRegistryInstance() commandRegistry {
 					m.refreshEventViewport()
 					return m, nil
 				}
+				m.resetOutputPanels()
+				m.mode = modeRunning
+
 				m.applyEvent(host.Event{
 					Time: time.Now(), Category: "SYSTEM", Summary: "Đang khôi phục quá trình sáng tác...", Level: "info",
 				})

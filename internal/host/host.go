@@ -162,10 +162,28 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 	h.router = flow.NewDispatcher(coordinator, store)
 	h.router.HumanGateEvery = cfg.Quality.HumanGateEvery
 	h.router.QualityReviewInterval = cfg.Quality.ReviewInterval
+	h.router.MaxDispatchRepeats = cfg.Quality.MaxDispatchRepeats
+	h.router.SteeringTimeout = cfg.Quality.SteeringTimeout
 	h.router.SetOnHumanGate(func(chapter int) {
 		body := fmt.Sprintf("Mốc duyệt người dùng: dừng tiến trình để kiểm duyệt chương %d. Hãy kiểm tra và nhập lệnh /gate ok.", chapter)
 		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: body, Level: "info"})
 		h.notifier.Send(notify.Notification{Kind: "repeat", Level: "info", Title: "ainovel: Mốc duyệt người dùng", Body: body})
+		// HumanGate Timeout: nếu cấu hình timeout > 0, khởi động timer để auto-accept.
+		// Hỗ trợ cả phút (HumanGateTimeoutMinutes) và giây (HumanGateAutoPassSeconds).
+		// Khi cả hai đều cấu hình, dùng giá trị nhỏ hơn (linh hoạt hơn).
+		var gateTimeout time.Duration
+		if cfg.Quality.HumanGateTimeoutMinutes > 0 {
+			gateTimeout = time.Duration(cfg.Quality.HumanGateTimeoutMinutes) * time.Minute
+		}
+		if cfg.Quality.HumanGateAutoPassSeconds > 0 {
+			sec := time.Duration(cfg.Quality.HumanGateAutoPassSeconds) * time.Second
+			if gateTimeout == 0 || sec < gateTimeout {
+				gateTimeout = sec
+			}
+		}
+		if gateTimeout > 0 {
+			go h.startHumanGateTimer(chapter, gateTimeout)
+		}
 	})
 	// Cảnh báo lệnh lặp lại: thuần telemetry, khi chạy không người trực "mô hình có thể đang xoay vòng tại chỗ" đáng báo người xem.
 	// Luồng sự kiện và notify phát cùng cặp — notify chỉ là bản sao ngoài màn hình của sự kiện trong màn hình (kiến trúc §2.3).
@@ -183,6 +201,25 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 			Level:    "warn",
 			Kind:     "flow_degraded",
 		})
+	})
+	// Circuit breaker mềm: khi lặp >= ngưỡng, inject strong instruction buộc Coordinator chuyển hướng.
+	// Không abort — chỉ gửi tin nhắn mạnh để LLM tự phán quyết (giữ triết lý "quyền phán quyết thuộc LLM").
+	h.router.SetOnSoftStop(func(agent, task string, n int) {
+		body := fmt.Sprintf("Circuit breaker: lệnh %s/%s đã lặp %d lần (ngưỡng %d). Buộc chuyển sang agent khác hoặc dừng.", agent, task, n, cfg.Quality.MaxDispatchRepeats)
+		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: body, Level: "error", Kind: "soft_stop"})
+		h.notifier.Send(notify.Notification{Kind: "repeat", Level: "error", Title: "ainovel: Circuit breaker", Body: body})
+		// Inject strong instruction vào Coordinator — không abort, cho LLM cơ hội tự sửa.
+		h.coordinator.FollowUp(agentcore.UserMsg(fmt.Sprintf("[Host - CIRCUIT BREAKER] Lệnh %s/%s đã lặp %d lần. BẮT BUỘC: chuyển sang agent phụ KHÁC hoặc gọi ask_user để dừng. Không được tiếp tục lệnh này.", agent, task, n)))
+	})
+	// Steering timeout: khi Flow=Steering vượt quá số lần cho phép, auto-exit về FlowWriting.
+	h.router.SetOnSteeringTimeout(func(steerCount int) {
+		body := fmt.Sprintf("Steering timeout: đã dispatch %d lần trong Flow=Steering (ngưỡng %d). Auto-exit về FlowWriting.", steerCount, cfg.Quality.SteeringTimeout)
+		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: body, Level: "warn", Kind: "steering_timeout"})
+		h.notifier.Send(notify.Notification{Kind: "repeat", Level: "warn", Title: "ainovel: Steering timeout", Body: body})
+		// Auto-exit steering: clear pending steer + chuyển flow về writing.
+		if err := h.store.ClearHandledSteer(); err != nil {
+			slog.Error("steering timeout: clear handled steer failed", "module", "host", "err", err)
+		}
 	})
 	h.routerDetach = h.router.Attach()
 
@@ -1132,6 +1169,29 @@ func (h *Host) Store() *storepkg.Store {
 func (h *Host) TriggerDispatch() {
 	if h.router != nil {
 		h.router.Dispatch()
+	}
+}
+
+// startHumanGateTimer khởi động timer cho human gate timeout.
+// Khi hết thời gian, tự động ack để tiến trình tiếp tục (auto-accept).
+func (h *Host) startHumanGateTimer(chapter int, timeout time.Duration) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		// Kiểm tra xem user đã ack chưa
+		if !h.store.World.HasHumanGateAck(chapter) {
+			body := fmt.Sprintf("Human gate timeout: chương %d đã chờ %s. Auto-accept để tiếp tục.", chapter, timeout.Round(time.Second))
+			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: body, Level: "warn", Kind: "human_gate_timeout"})
+			h.notifier.Send(notify.Notification{Kind: "repeat", Level: "warn", Title: "ainovel: Human gate timeout", Body: body})
+			// Auto-ack để tiến trình tiếp tục
+			_ = h.store.World.SaveHumanGateAck(chapter, "auto-accept: timeout")
+			// Trigger dispatch để tiếp tục
+			h.router.Dispatch()
+		}
+	case <-h.done:
+		// Host đóng, hủy timer
+		return
 	}
 }
 

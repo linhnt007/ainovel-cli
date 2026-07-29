@@ -722,6 +722,9 @@ func (m *Model) applyEvent(ev host.Event) {
 
 	m.events = append(m.events, ev)
 	if ev.ID != "" {
+		if m.eventIndex == nil {
+			m.eventIndex = make(map[string]int)
+		}
 		m.eventIndex[ev.ID] = len(m.events) - 1
 	}
 	if len(m.events) > maxEvents {

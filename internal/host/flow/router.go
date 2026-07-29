@@ -58,6 +58,9 @@ type State struct {
 	QualityReviewInterval int
 	// LoadWarnings chứa danh sách cảnh báo khi nạp trạng thái
 	LoadWarnings []string
+	// LoadDegraded: true khi có bất kỳ warning nào khi nạp trạng thái.
+	// Router có thể dùng flag này để ưu tiên safe mode (ví dụ: chỉ dispatch writer, không dispatch editor).
+	LoadDegraded bool
 }
 
 // Route trả về chỉ thị bước tiếp theo dựa trên dữ liệu thực tế; trả về nil nghĩa là để Coordinator LLM tự quyết định.
@@ -66,7 +69,7 @@ type State struct {
 //  1. Phase=Complete        → nil (LLM xuất tóm tắt)
 //  2. Phase!=Writing        → nil (LLM quyết định chọn kiến trúc sư / bổ sung kế hoạch)
 //  3. PendingRewrites không rỗng  → writer viết lại/đánh bóng theo hàng đợi
-//  3.5. Human Gate Pending      → dừng chờ duyệt (/gate)
+// 3.5. NeedsRewriteReview > 0     → editor(re-review chương sau viết lại)
 //  4. Flow=Steering         → nil (đang xử lý can thiệp của người dùng)
 //  5. Thiếu đánh giá cuối cung truyện           → editor(arc review)
 //  6. Có đánh giá nhưng thiếu tóm tắt cung  → editor(arc summary)
@@ -74,6 +77,7 @@ type State struct {
 //  8. Cung truyện tiếp theo là skeleton           → architect_long(expand_arc)
 //  9. Cuối tập cần quyết định tập tiếp theo       → architect_long(append_volume / complete_book)
 // 10. Flat mode còn nợ review định kỳ           → editor(batch review)
+// 10.5. Human Gate Pending      → dừng chờ duyệt (/gate) (sau editor để editor review trước)
 // 11. Các trường hợp còn lại                  → writer(viết next_chapter)
 func Route(s State) *Instruction {
 	inst := routeInner(s)
@@ -125,12 +129,12 @@ func routeInner(s State) *Instruction {
 		}
 	}
 
-	// 3.5. Human Gate: dừng chờ người dùng duyệt qua TUI
-	if s.HumanGatePending {
+	// 3.5. Post-rewrite quality gate: re-review trước khi tiếp tục flow bình thường
+	if p.NeedsRewriteReview > 0 {
 		return &Instruction{
-			Agent:  "",
-			Task:   fmt.Sprintf("DỪNG: mốc duyệt chương %d — chờ người dùng duyệt (/gate)", s.LastCompleted),
-			Reason: "human gate",
+			Agent:  "editor",
+			Task:   fmt.Sprintf("Đánh giá lại chương %d sau viết lại (scope=chapter)", p.NeedsRewriteReview),
+			Reason: fmt.Sprintf("Hàng đợi rewrite đã rút hết, cần editor re-review chương %d", p.NeedsRewriteReview),
 		}
 	}
 
@@ -176,11 +180,8 @@ func routeInner(s State) *Instruction {
 		}
 	}
 
-	// 10. Chế độ flat: cưỡng chế review định kỳ mỗi ReviewInterval chương. Trước đây Router luôn
-	// dispatch "viết chương kế", việc gọi editor phụ thuộc hoàn toàn Coordinator LLM đọc tín hiệu
-	// review_required và tuân prompt — model yếu bỏ qua → truyện chạy hàng chục chương không review.
-	// Nay quyết định dựa trên sự thật đĩa (HasPendingFlatReview suy từ file review), sống sót qua crash.
-	if !p.Layered && s.HasPendingFlatReview {
+	// 10. Cưỡng chế review định kỳ mỗi ReviewInterval chương (áp dụng cho cả Flat và Layered).
+	if s.HasPendingFlatReview {
 		reviewInterval := domain.GetReviewInterval(s.QualityReviewInterval)
 		to := (s.LastCompleted / reviewInterval) * reviewInterval
 		from := to - reviewInterval + 1
@@ -188,6 +189,15 @@ func routeInner(s State) *Instruction {
 			Agent:  "editor",
 			Task:   fmt.Sprintf("Đánh giá batch chương %d-%d (scope=global)", from, to),
 			Reason: "Review định kỳ chưa hoàn thành",
+		}
+	}
+
+	// 10.5. Human Gate: dừng chờ người dùng duyệt qua TUI (sau editor để editor có cơ hội review trước)
+	if s.HumanGatePending {
+		return &Instruction{
+			Agent:  "",
+			Task:   fmt.Sprintf("DỪNG: mốc duyệt chương %d — chờ người dùng duyệt (/gate)", s.LastCompleted),
+			Reason: "human gate",
 		}
 	}
 

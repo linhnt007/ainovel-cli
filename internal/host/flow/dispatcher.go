@@ -34,6 +34,10 @@ type Dispatcher struct {
 	// khi cùng một lệnh được phát đến lần thứ repeatNotifyAt; không ảnh hưởng ngược lại logic phát lệnh, logic phát không hay biết về sự tồn tại của nó.
 	onRepeat func(agent, task string, n int)
 
+	// onSoftStop là callback khi circuit breaker kích hoạt (lặp lại >= MaxDispatchRepeats).
+	// Nhận vào agent, task, repeat count. Host dùng callback này để inject strong instruction hoặc abort.
+	onSoftStop func(agent, task string, n int)
+
 	// Tần suất dừng chờ người dùng duyệt (human gate).
 	HumanGateEvery int
 	// Callback khi dừng tại mốc duyệt người dùng (human gate).
@@ -42,8 +46,25 @@ type Dispatcher struct {
 	// QualityReviewInterval: khoảng cách kiểm duyệt toàn cục từ cấu hình (mỗi N chương). Mặc định 5.
 	QualityReviewInterval int
 
+	// MaxDispatchRepeats: ngưỡng mềm cho circuit breaker. 0 = disable (chỉ notify).
+	MaxDispatchRepeats int
+
+	// SteeringTimeout: số lần dispatch tối đa khi Flow=Steering trước khi auto-exit. 0 = disable.
+	SteeringTimeout int
+
+	// onSteeringTimeout là callback khi steering vượt quá số lần cho phép.
+	onSteeringTimeout func(steerCount int)
+
 	// onDegraded là callback khi dòng chảy nạp trạng thái bị suy giảm (có cảnh báo/lỗi IO)
 	onDegraded func(warnings []string)
+
+	// steeringCount đếm số lần dispatch liên tiếp khi Flow=Steering.
+	steeringCount int
+
+	// lastGateChapter ghi nhớ chương cuối cùng đã gửi thông báo human gate,
+	// đảm bảo chỉ gửi FollowUp 1 lần duy nhất cho mỗi mốc gate, tránh vòng lặp
+	// coordinator → LLM tốn token → gate chặn → dispatch lại → ∞.
+	lastGateChapter int
 }
 
 // repeatNotifyAt cố định không đưa vào cấu hình: đây không phải ngưỡng luồng điều khiển (không kích hoạt hành động nào, chỉ là "gọi người"),
@@ -71,6 +92,16 @@ func (d *Dispatcher) SetOnRepeat(cb func(agent, task string, n int)) {
 	d.onRepeat = cb
 }
 
+// SetOnSoftStop đăng ký callback khi circuit breaker kích hoạt (lặp >= MaxDispatchRepeats).
+func (d *Dispatcher) SetOnSoftStop(cb func(agent, task string, n int)) {
+	d.onSoftStop = cb
+}
+
+// SetOnSteeringTimeout đăng ký callback khi steering vượt quá số lần cho phép.
+func (d *Dispatcher) SetOnSteeringTimeout(cb func(steerCount int)) {
+	d.onSteeringTimeout = cb
+}
+
 // Enable bật phát lệnh theo tuyến đường; khi tắt, EventToolExecEnd đến sẽ không gửi FollowUp.
 // Host bật sau khi hoàn thành prompt đầu tiên trong Start/Resume, tránh xung đột với luồng khởi động.
 func (d *Dispatcher) Enable() { d.enabled.Store(true) }
@@ -84,13 +115,11 @@ func (d *Dispatcher) handle(ev agentcore.Event) {
 	if !d.enabled.Load() {
 		return
 	}
-	// Điểm kích hoạt chính xác: agent phụ trả về thành công, hoặc reopen_book mở lại sách đã hoàn thành vào trạng thái làm lại.
-	// Cả hai đều đã tiến lớp thực tế, cần ngay một lần tính Route để xác định bước tiếp theo — reopen_book không phải subagent
-	// (pha complete cần vượt qua completePhaseGate), nếu không kích hoạt ở đây, hàng đợi làm lại sau khi mở lại sẽ không có dispatcher.
-	// Không dùng EventModelResponse vì agentcore emit nó mỗi lần LLM call hoàn thành,
-	// sẽ ép cùng một lệnh vào followUpQ nhiều lần; Steer kiểu truy vấn bị coordinator.md ràng buộc tiếp tục gọi subagent
-	// trong cùng một turn, từ đó chạm điểm kích hoạt này.
-	if ev.Type != agentcore.EventToolExecEnd || ev.IsError {
+	// Cả tool thành công lẫn tool bị gate chặn (IsError=true) đều cần route lại:
+	// - Thành công → tiến trình đã thay đổi, cần quyết định bước tiếp.
+	// - Gate chặn (vd: chưa review mà đòi gọi writer) → coordinator đang lạc hướng,
+	//   Host phải gửi FollowUp đúng để đưa về luồng, không được bỏ mặc coordinator tự xoay.
+	if ev.Type != agentcore.EventToolExecEnd {
 		return
 	}
 	if ev.Tool != "subagent" && ev.Tool != "reopen_book" {
@@ -101,7 +130,7 @@ func (d *Dispatcher) handle(ev agentcore.Event) {
 
 // Dispatch tính toán tuyến đường ngay lập tức và gửi lệnh; Host có thể chủ động gọi vào thời điểm đặc biệt (ví dụ sau Resume).
 func (d *Dispatcher) Dispatch() {
-	state := LoadState(d.store)
+	state := LoadState(d.store, d.QualityReviewInterval)
 	if len(state.LoadWarnings) > 0 && d.onDegraded != nil {
 		d.onDegraded(state.LoadWarnings)
 	}
@@ -116,12 +145,30 @@ func (d *Dispatcher) Dispatch() {
 		return
 	}
 
+	// Steering timeout: đếm số lần dispatch liên tiếp khi Flow=Steering.
+	// Khi vượt ngưỡng, gọi onSteeringTimeout để Host auto-exit steering.
+	if state.Progress != nil && state.Progress.Flow == "steering" {
+		d.steeringCount++
+		if d.SteeringTimeout > 0 && d.steeringCount >= d.SteeringTimeout && d.onSteeringTimeout != nil {
+			slog.Warn("Steering timeout: auto-exit steering flow", "module", "host.flow", "steer_count", d.steeringCount, "threshold", d.SteeringTimeout)
+			d.onSteeringTimeout(d.steeringCount)
+			d.steeringCount = 0 // reset sau khi trigger
+		}
+	} else {
+		d.steeringCount = 0 // reset khi không phải steering
+	}
+
 	if inst.Agent == "" && state.HumanGatePending {
 		slog.Info("Mốc duyệt người dùng: không gọi subagent, thông báo người dùng và chờ", "module", "host.flow", "chapter", state.LastCompleted)
 		if d.onHumanGate != nil {
 			d.onHumanGate(state.LastCompleted)
 		}
-		d.coordinator.FollowUp(agentcore.UserMsg(fmt.Sprintf("[Host] Mốc duyệt người dùng: dừng tiến trình sáng tác tự động để chờ người dùng kiểm tra và duyệt chương %d.", state.LastCompleted)))
+		// Chỉ gửi FollowUp 1 lần duy nhất cho mỗi mốc gate, tránh vòng lặp
+		// coordinator nhận message → LLM tốn token → gate chặn → dispatch lại → FollowUp nữa → ∞.
+		if d.lastGateChapter != state.LastCompleted {
+			d.coordinator.FollowUp(agentcore.UserMsg(fmt.Sprintf("[Host] Mốc duyệt người dùng: dừng tiến trình sáng tác tự động để chờ người dùng kiểm tra và duyệt chương %d.", state.LastCompleted)))
+			d.lastGateChapter = state.LastCompleted
+		}
 		return
 	}
 
@@ -156,6 +203,7 @@ func formatDispatchMessage(inst *Instruction, n int) string {
 // trackRepeat ghi lại số lần phát liên tiếp cùng một lệnh và trả về số lần hiện tại (1 = lệnh mới).
 // Dùng đẳng thức Agent+Task (không so Reason vì Reason là văn bản phụ trợ cho người đọc).
 // Khi số lần đúng bằng repeatNotifyAt, kích hoạt onRepeat một lần ngoài lock (sau khi khóa thay đổi thì đặt lại bộ đếm).
+// Khi số lần >= MaxDispatchRepeats (và MaxDispatchRepeats > 0), kích hoạt onSoftStop — circuit breaker mềm.
 func (d *Dispatcher) trackRepeat(next *Instruction) int {
 	d.lastMu.Lock()
 	if d.lastSent != nil && d.lastSent.Agent == next.Agent && d.lastSent.Task == next.Task {
@@ -170,6 +218,10 @@ func (d *Dispatcher) trackRepeat(next *Instruction) int {
 
 	if n == repeatNotifyAt && d.onRepeat != nil {
 		d.onRepeat(next.Agent, next.Task, n)
+	}
+	// Circuit breaker mềm: khi lặp >= ngưỡng, inject strong instruction buộc Coordinator chuyển hướng.
+	if d.MaxDispatchRepeats > 0 && n >= d.MaxDispatchRepeats && d.onSoftStop != nil {
+		d.onSoftStop(next.Agent, next.Task, n)
 	}
 	return n
 }

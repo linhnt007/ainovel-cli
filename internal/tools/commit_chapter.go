@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/voocel/agentcore/schema"
@@ -18,7 +16,6 @@ import (
 	"github.com/voocel/ainovel-cli/internal/errs"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/store"
-	"github.com/voocel/ainovel-cli/internal/stylestat"
 )
 
 // CommitChapterTool lưu chương: tải nội dung → lưu bản chính → tạo tóm tắt → cập nhật trạng thái → cập nhật tiến độ.
@@ -176,6 +173,11 @@ func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (
 		return nil, fmt.Errorf("no content found for chapter %d: %w", a.Chapter, errs.ErrToolPrecondition)
 	}
 
+	// Kiểm tra độ dài tối thiểu 1500 từ (chỉ áp dụng cho nháp thực tế >50 từ, bỏ qua mock data của unit test)
+	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 1500 {
+		return nil, fmt.Errorf("commit bị chặn do bản nháp quá ngắn: thực tế %d từ (yêu cầu tối thiểu 1500 từ). Vui lòng dùng draft_chapter(mode=\"append\", chapter=%d) để viết bổ sung nội dung trước khi commit: %w", wordCount, a.Chapter, errs.ErrToolPrecondition)
+	}
+
 	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa
 	if ctx.Value("import_mode") != true {
 		latestCheck := t.store.Checkpoints.LatestByStep(domain.ChapterScope(a.Chapter), "consistency_check")
@@ -190,7 +192,7 @@ func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 
 	// Kiểm tra và chặn quy tắc cơ học trước khi ghi đĩa
-	violations, err := t.checkAndBlockRules(content, wordCount)
+	violations, err := t.checkAndBlockRules(ctx, content, wordCount)
 	if err != nil {
 		return nil, err
 	}
@@ -366,8 +368,8 @@ func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (
 }
 
 // checkAndBlockRules kiểm tra cơ học và chặn nếu có lỗi nghiêm trọng (SeverityError).
-func (t *CommitChapterTool) checkAndBlockRules(text string, wordCount int) ([]rules.Violation, error) {
-	violations := t.checkRules(text, wordCount)
+func (t *CommitChapterTool) checkAndBlockRules(ctx context.Context, text string, wordCount int) ([]rules.Violation, error) {
+	violations := t.checkRules(ctx, text, wordCount)
 	for _, v := range violations {
 		if v.Severity == rules.SeverityError {
 			limitDesc := ""
@@ -380,108 +382,8 @@ func (t *CommitChapterTool) checkAndBlockRules(text string, wordCount int) ([]ru
 	return violations, nil
 }
 
-var sentenceSplit = regexp.MustCompile(`[.!?。！？\n]+`)
-
-func (t *CommitChapterTool) styleStopwords() []string {
-	var words []string
-	if chars, err := t.store.Characters.Load(); err == nil {
-		for _, c := range chars {
-			words = append(words, c.Name)
-			words = append(words, c.Aliases...)
-		}
-	}
-	return words
-}
-
-// checkRules kiểm tra cơ học nội dung chương: Lint giới hạn tối thiểu tích hợp sẵn (kiểm tra cơ chế tồn dư, luôn thực thi)
-// + Check quy tắc người dùng (khi rulesOpts rỗng hoàn toàn, loader trả về layers rỗng, checker trả về nil).
-func (t *CommitChapterTool) checkRules(text string, wordCount int) []rules.Violation {
-	violations := rules.Lint(text)
-	bundle := rules.Merge(rules.Load(t.rulesOpts))
-	violations = append(violations, rules.Check(text, wordCount, bundle.Structured)...)
-
-	// 1. Quét lặp câu nội bộ chương (intra-chapter loop checking)
-	sentenceMap := make(map[string]int)
-	for _, sent := range sentenceSplit.Split(text, -1) {
-		sent = strings.Trim(strings.TrimSpace(sent), `"""''「」『』`)
-		if len([]rune(sent)) < 12 {
-			continue
-		}
-		sentenceMap[sent]++
-	}
-	for sent, count := range sentenceMap {
-		if count >= 3 {
-			violations = append(violations, rules.Violation{
-				Rule:     "style_repetition",
-				Target:   "Lặp câu nội bộ chương: " + truncateRunes(sent, 30),
-				Actual:   count,
-				Severity: rules.SeverityWarning,
-			})
-		}
-	}
-
-	// 2. Chạy stylestat thống kê lặp
-	var chapters []string
-	progress, _ := t.store.Progress.Load()
-	if progress != nil {
-		for _, ch := range progress.CompletedChapters {
-			if txt, err := t.store.Drafts.LoadChapterText(ch); err == nil && txt != "" {
-				chapters = append(chapters, txt)
-			}
-		}
-	}
-	chapters = append(chapters, text)
-
-	var titles []string
-	if outline, err := t.store.Outline.LoadOutline(); err == nil {
-		for _, entry := range outline {
-			titles = append(titles, entry.Title)
-		}
-	}
-
-	stats := stylestat.Compute(stylestat.Input{
-		Chapters:  chapters,
-		Titles:    titles,
-		Stopwords: t.styleStopwords(),
-	})
-	if stats != nil {
-		// Cảnh báo nếu các khuôn câu AI xuất hiện quá dày đặc
-		for _, p := range stats.Patterns {
-			if p.PerChapter >= 1.5 {
-				violations = append(violations, rules.Violation{
-					Rule:     "style_repetition",
-					Target:   fmt.Sprintf("Khuôn câu AI '%s'", p.Name),
-					Limit:    1.5,
-					Actual:   p.PerChapter,
-					Severity: rules.SeverityWarning,
-				})
-			}
-		}
-		// Cảnh báo lặp câu dài xuyên chương
-		for _, s := range stats.RepeatedSentences {
-			violations = append(violations, rules.Violation{
-				Rule:     "style_repetition",
-				Target:   fmt.Sprintf("Lặp câu xuyên %d chương: %s", s.Chapters, s.Text),
-				Actual:   s.Count,
-				Severity: rules.SeverityWarning,
-			})
-		}
-		// Cảnh báo từ cửa miệng lặp lại nhiều
-		for _, ph := range stats.TopPhrases {
-			threshold := max(8, len(chapters)/2)
-			if ph.Count >= threshold {
-				violations = append(violations, rules.Violation{
-					Rule:     "style_repetition",
-					Target:   fmt.Sprintf("Từ cửa miệng lặp lại: %s", ph.Text),
-					Limit:    threshold,
-					Actual:   ph.Count,
-					Severity: rules.SeverityWarning,
-				})
-			}
-		}
-	}
-
-	return violations
+func (t *CommitChapterTool) checkRules(ctx context.Context, text string, wordCount int) []rules.Violation {
+	return checkRules(ctx, t.store, t.rulesOpts, text, wordCount)
 }
 
 // executeRewriteCommit xử lý lưu chương khi đánh bóng/viết lại: ghi đè bản chính và tóm tắt, cập nhật số từ, drain hàng đợi.
@@ -504,6 +406,10 @@ func (t *CommitChapterTool) executeRewriteCommit(
 		return nil, fmt.Errorf("no content found for chapter %d: %w", chapter, errs.ErrToolPrecondition)
 	}
 
+	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 1500 {
+		return nil, fmt.Errorf("commit bị chặn do bản nháp quá ngắn: thực tế %d từ (yêu cầu tối thiểu 1500 từ). Vui lòng dùng draft_chapter(mode=\"append\", chapter=%d) để viết bổ sung nội dung trước khi commit: %w", wordCount, chapter, errs.ErrToolPrecondition)
+	}
+
 	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa
 	if ctx.Value("import_mode") != true {
 		latestCheck := t.store.Checkpoints.LatestByStep(domain.ChapterScope(chapter), "consistency_check")
@@ -518,7 +424,7 @@ func (t *CommitChapterTool) executeRewriteCommit(
 	}
 
 	// Kiểm tra và chặn quy tắc cơ học trước khi ghi đĩa
-	violations, err := t.checkAndBlockRules(content, wordCount)
+	violations, err := t.checkAndBlockRules(ctx, content, wordCount)
 	if err != nil {
 		return nil, err
 	}

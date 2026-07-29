@@ -216,6 +216,38 @@ func mergeConfig(base, overlay Config) Config {
 		base.Notify = overlay.Notify
 	}
 
+	// Quality: merge từng trường (cấp dự án có thể chỉ ghi đè một vài tham số, giữ nguyên các tham số còn lại từ toàn cục)
+	if overlay.Quality != (QualityConfig{}) {
+		q := overlay.Quality
+		if q.HumanGateEvery > 0 {
+			base.Quality.HumanGateEvery = q.HumanGateEvery
+		}
+		if q.ReviewInterval > 0 {
+			base.Quality.ReviewInterval = q.ReviewInterval
+		}
+		if q.MaxDispatchRepeats > 0 {
+			base.Quality.MaxDispatchRepeats = q.MaxDispatchRepeats
+		}
+		if q.SteeringTimeout > 0 {
+			base.Quality.SteeringTimeout = q.SteeringTimeout
+		}
+		if q.HumanGateTimeoutMinutes > 0 {
+			base.Quality.HumanGateTimeoutMinutes = q.HumanGateTimeoutMinutes
+		}
+		if q.HumanGateAutoPassSeconds > 0 {
+			base.Quality.HumanGateAutoPassSeconds = q.HumanGateAutoPassSeconds
+		}
+		if q.LightGateEnabled {
+			base.Quality.LightGateEnabled = q.LightGateEnabled
+		}
+		if q.LightGateTier2Interval > 0 {
+			base.Quality.LightGateTier2Interval = q.LightGateTier2Interval
+		}
+		if q.StyleRepeatThreshold > 0 {
+			base.Quality.StyleRepeatThreshold = q.StyleRepeatThreshold
+		}
+	}
+
 	return base
 }
 

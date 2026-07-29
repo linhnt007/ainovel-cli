@@ -14,6 +14,9 @@ type WorldStore struct{ io *IO }
 
 func NewWorldStore(io *IO) *WorldStore { return &WorldStore{io: io} }
 
+// IO trả về IO instance (cho phép tools bên ngoài ghi file).
+func (s *WorldStore) IO() *IO { return s.io }
+
 // ── Dòng thời gian ──
 
 // SaveTimeline ghi toàn bộ timeline.json + timeline.md (ghi nguyên tử).
@@ -286,6 +289,11 @@ func (s *WorldStore) SaveReview(r domain.ReviewEntry) error {
 	return s.io.WriteJSON(rel, r)
 }
 
+// SaveReviewVote lưu phiếu đánh giá của editor.
+func (s *WorldStore) SaveReviewVote(chapter int, editorID string, data []byte) error {
+	return s.io.WriteFile(fmt.Sprintf("meta/review_votes/%02d_%s.json", chapter, editorID), data)
+}
+
 // HumanGateAck đại diện cho việc duyệt qua một chương của người dùng.
 type HumanGateAck struct {
 	Chapter int       `json:"chapter"`
@@ -360,6 +368,20 @@ func (s *WorldStore) LoadLastReview(fromChapter int) (*domain.ReviewEntry, error
 			return nil, err
 		}
 		return &r, nil
+	}
+	return nil, nil
+}
+
+// LoadLastReviewAny đọc lần đánh giá bất kỳ (global hoặc chapter) gần nhất từ fromChapter trở về trước.
+func (s *WorldStore) LoadLastReviewAny(fromChapter int) (*domain.ReviewEntry, error) {
+	for ch := fromChapter; ch >= 1; ch-- {
+		var r domain.ReviewEntry
+		if err := s.io.ReadJSON(fmt.Sprintf("reviews/%02d-global.json", ch), &r); err == nil {
+			return &r, nil
+		}
+		if err := s.io.ReadJSON(fmt.Sprintf("reviews/%02d.json", ch), &r); err == nil {
+			return &r, nil
+		}
 	}
 	return nil, nil
 }

@@ -1,15 +1,18 @@
-Respond terse like smart caveman. All technical substance stay. Only fluff die.
+# ainovel-cli
 
-Rules:
-- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging
-- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.
-- Pattern: [thing] [action] [reason]. [next step].
-- Not: "Sure! I'd be happy to help you with that."
-- Yes: "Bug in auth middleware. Fix:"
+## CodeGraph — kỷ luật context (chống phình)
 
-Switch level: /caveman lite|full|ultra|wenyan
-Stop: "stop caveman" or "normal mode"
+`.codegraph/` có index. Ưu tiên CodeGraph trước grep/Read.
 
-Auto-Clarity: drop caveman for security warnings, irreversible actions, user confused. Resume after.
+| Nhu cầu | Tool | Chi phí |
+|---------|------|---------|
+| "X ở đâu", map symbol, dependencies | Bash `codegraph explore "tên_symbol"` | thấp |
+| Tìm symbol mờ | Bash `codegraph explore "từ_khóa"` | thấp |
+| Ai gọi / gọi gì / blast radius | Bash `codegraph explore "callers X"` | thấp |
+| Flow xuyên nhiều symbol | MCP `codegraph_explore` `maxFiles: 2` | cao |
 
-Boundaries: code/commits/PRs written normal.
+Quy tắc:
+- MCP `codegraph_explore` CHỈ dùng cho flow/architecture — bắt đầu `maxFiles: 2`.
+- Bash `codegraph explore` dùng cho mọi tra cứu đơn.
+- Source CodeGraph hiện = đã Read; KHÔNG mở lại file đó.
+- Không grep khi CodeGraph có đáp án.
