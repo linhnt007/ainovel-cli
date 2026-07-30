@@ -9,7 +9,7 @@
 
 ## Nội dung chính
 
-[Nội dung chương 3000-6000 từ, tối thiểu không dưới 2500 từ]
+[Nội dung chương 3000-6000 từ, tối thiểu 3000 từ]
 
 ---
 

@@ -15,6 +15,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/agents/ctxpack"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/host/flow"
 	"github.com/voocel/ainovel-cli/internal/host/reminder"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/store"
@@ -246,7 +247,7 @@ func BuildCoordinator(
 		Model:              writerModel,
 		SystemPrompt:       writerPrompt,
 		Tools:              writerTools,
-		MaxTurns:           30,
+		MaxTurns:           50,
 		MaxRetries:         subagentMaxRetries,
 		ThinkingLevel:      roleThinking(cfg, "writer"),
 		ToolsAreIdempotent: true,
@@ -333,8 +334,8 @@ func BuildCoordinator(
 		agentcore.WithMaxRetries(subagentMaxRetries),
 		agentcore.WithContextManager(coordinatorEngine),
 		agentcore.WithStopGuard(reminder.NewStopGuard(store, nil)),
-		// Chặn cứng việc phân phát subagent khi phase=complete, ngăn Writer lặp vô tận.
-		agentcore.WithToolGate(completePhaseGate(store)),
+		// Chặn cứng việc phân phát subagent khi phase=complete hoặc đang chờ duyệt mốc.
+		agentcore.WithToolGate(qualityControlGate(store, cfg)),
 	)
 	// Cường độ thinking của Coordinator: áp dụng kết quả phân tích vô điều kiện. Khi chưa cấu hình
 	// thì là rỗng (không gửi thinking, dùng mặc định provider), nhất quán với các subagent
@@ -358,23 +359,74 @@ func BuildCoordinator(
 	return agent, askUser, restore, coordinatorEngine, applyThinking
 }
 
-// completePhaseGate trả về một ToolGate: từ chối tất cả phân phát subagent khi phase=complete.
-// Ngăn Coordinator LLM tiếp tục gọi Writer/Architect sau khi sách đã hoàn thành, tránh vòng lặp vô tận.
-func completePhaseGate(st *store.Store) agentcore.ToolGate {
-	return func(_ context.Context, req agentcore.GateRequest) (*agentcore.GateDecision, error) {
+// qualityControlGate trả về một ToolGate: thực thi các quy tắc kiểm soát chất lượng và hàng rào duyệt.
+func qualityControlGate(st *store.Store, cfg bootstrap.Config) agentcore.ToolGate {
+	return func(ctx context.Context, req agentcore.GateRequest) (*agentcore.GateDecision, error) {
 		if req.Call.Name != "subagent" {
 			return nil, nil
 		}
-		// fail-open: khi Load lỗi hoặc progress rỗng thì cho qua hết, không để lỗi đọc thoáng qua
-		// làm kẹt việc phân phát bình thường. Chi phí duy nhất là nếu đọc thất bại đúng lúc phase=complete
-		// thì deadlock có thể tái xuất hiện (xác suất cực thấp, chấp nhận được).
+
+		var a struct {
+			Agent string `json:"agent"`
+		}
+		if err := json.Unmarshal(req.Call.Args, &a); err != nil {
+			return nil, err
+		}
+
 		progress, _ := st.Progress.Load()
-		if progress != nil && progress.Phase == domain.PhaseComplete {
+		if progress == nil {
+			return nil, nil
+		}
+
+		// 1. Chặn khi toàn bộ sách đã hoàn thành
+		if progress.Phase == domain.PhaseComplete {
 			return &agentcore.GateDecision{
 				Allowed: false,
-				Reason:  "Toàn bộ sách đã hoàn thành (phase=complete), không thể trực tiếp phân phát subagent. Nếu người dùng muốn làm lại chương đã viết, hãy gọi reopen_book(chapters=[...]) để mở lại sách sang trạng thái làm lại (sau đó sẽ tự động phân phát writer viết lại); nếu người dùng muốn thêm cốt truyện mới, hãy thông báo cần tạo dự án mới.",
+				Reason:  "Toàn bộ sách đã hoàn thành (phase=complete), không thể trực tiếp phân phát subagent. Nếu người dùng muốn làm lại chương đã viết, hãy gọi reopen_book(chapters=[...]) để mở lại sách sang trạng thái làm lại; nếu người dùng muốn thêm cốt truyện mới, hãy thông báo cần tạo dự án mới.",
 			}, nil
 		}
+
+		qualityReviewInterval := cfg.Quality.ReviewInterval
+		state := flow.LoadState(st, qualityReviewInterval)
+		// Fix 3D: đọc HumanGateEvery từ store (đồng bộ với dispatcher), fallback về config nếu store chưa có.
+		if storedEvery := st.Progress.HumanGateEvery(); storedEvery > 0 {
+			state.HumanGateEvery = storedEvery
+		} else {
+			state.HumanGateEvery = cfg.Quality.HumanGateEvery
+		}
+		state.QualityReviewInterval = cfg.Quality.ReviewInterval
+		if state.LastCompleted > 0 && state.HumanGateEvery > 0 && state.LastCompleted%state.HumanGateEvery == 0 && !st.World.HasHumanGateAck(state.LastCompleted) {
+			state.HumanGatePending = true
+		}
+
+		// Fix 1C: Chặn bằng frozen marker (persistent, không phụ thuộc config snapshot).
+		if st.Progress.IsHumanGateFrozen(0) {
+			frozenCh := st.Progress.HumanGateFrozenChapter()
+			return &agentcore.GateDecision{
+				Allowed: false,
+				Reason:  fmt.Sprintf("Mốc duyệt người dùng đang chờ duyệt cho chương %d. Hãy yêu cầu người dùng duyệt qua lệnh /gate ok trước khi tiếp tục.", frozenCh),
+			}, nil
+		}
+
+		// 2. Chặn human gate (belt-and-suspenders: dựa trên config + ack)
+		if state.HumanGatePending {
+			return &agentcore.GateDecision{
+				Allowed: false,
+				Reason:  fmt.Sprintf("Mốc duyệt người dùng đang chờ duyệt cho chương %d. Hãy yêu cầu người dùng duyệt qua lệnh /gate ok trước khi tiếp tục phân phát subagent.", state.LastCompleted),
+			}, nil
+		}
+
+		// 3. Chặn writer khi còn nợ review định kỳ
+		if state.HasPendingFlatReview && a.Agent == "writer" {
+			reviewInterval := domain.GetReviewInterval(state.QualityReviewInterval)
+			to := (state.LastCompleted / reviewInterval) * reviewInterval
+			from := to - reviewInterval + 1
+			return &agentcore.GateDecision{
+				Allowed: false,
+				Reason:  fmt.Sprintf("Đã hoàn thành chương %d, cần biên tập viên thực hiện đánh giá batch chương %d-%d trước khi tiếp tục viết chương mới.", state.LastCompleted, from, to),
+			}, nil
+		}
+
 		return nil, nil
 	}
 }

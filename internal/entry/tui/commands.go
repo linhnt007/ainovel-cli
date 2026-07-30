@@ -68,6 +68,36 @@ func commandRegistryInstance() commandRegistry {
 			},
 		},
 		{
+			Name:        "new",
+			Group:       "system",
+			Usage:       "/new",
+			Description: "Xóa dự án hiện tại và bắt đầu tạo tiểu thuyết mới",
+			AutoExecute: true,
+			Run: func(m Model, _ []string) (tea.Model, tea.Cmd) {
+				if err := m.runtime.ResetAll(); err != nil {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "Tạo dự án mới thất bại: " + err.Error(), Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				m.mode = modeNew
+				m.startupMode = startupModeQuick
+				m.resetOutputPanels()
+				m.snapshot = m.runtime.Snapshot()
+				m.textarea.Reset()
+				m.textarea.Placeholder = placeholderForNewMode(startupModeQuick)
+				m.textarea.Focus()
+				m.cocreate = nil
+				m.err = nil
+				m.refreshEventViewport()
+				m.refreshStreamViewport()
+				m.refreshDetailViewport()
+				m.refreshStateViewport()
+				return m, nil
+			},
+		},
+		{
 			Name:        "model",
 			Group:       "system",
 			Usage:       "/model [role]",
@@ -252,6 +282,11 @@ func commandRegistryInstance() commandRegistry {
 					})
 					m.refreshEventViewport()
 					return m, nil
+				}
+
+				// Fix 1E: Xóa frozen marker khi user ack gate.
+				if err := m.runtime.Store().Progress.ClearHumanGateFreeze(); err != nil {
+					slog.Warn("failed to clear human gate freeze", "err", err)
 				}
 
 				m.applyEvent(host.Event{

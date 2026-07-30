@@ -200,7 +200,7 @@ có thể thêm một đoạn YAML front matter ở đầu file — commit_chapt
 (forbidden_chars/forbidden_phrases luôn error; chapter_words/fatigue_words chỉ warning, không chặn commit):
 
     ---
-    chapter_words: 3000-6000          # phạm vi số từ mỗi chương (đếm từ thật, tách khoảng trắng); lệch phạm vi = warning
+    chapter_words: 2000-4000          # phạm vi số từ mỗi chương (đếm từ thật, tách khoảng trắng); lệch phạm vi = warning
     forbidden_phrases: ["theo một nghĩa nào đó"]  # cụm từ bị cấm, xuất hiện là báo lỗi (error)
     fatigue_words: {không khỏi: 1}    # từ sáo rỗng, vượt ngưỡng mỗi chương sẽ cảnh báo (warning)
     ---

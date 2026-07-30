@@ -11,9 +11,7 @@ Dùng danh sách kiểm tra chất lượng này trước khi bàn giao chương
   - Thu hút người đọc nhưng không tiết lộ quá nhiều
 
 - [ ] **Số từ đạt yêu cầu**
-  - Chương ngắn: 800–1500 từ
-  - Chương tiêu chuẩn: 1500–3000 từ
-  - Chương dài: 3000–6000 từ
+  - Phạm vi: 3000–6000 từ (tối thiểu 3000 từ)
 
 - [ ] **Tính hoàn chỉnh của chương**
   - Có mở đầu, phát triển, cao trào

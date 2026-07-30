@@ -224,8 +224,6 @@ Càng căng thẳng hơn: Phải rời đi ngay lập tức
 
 | Số từ chương | Số sự kiện cốt lõi | Số cảnh |
 |---------|-------------|---------|
-| 800-1500 | 1 sự kiện chính | 1-2 cảnh |
-| 1500-3000 | 1-2 sự kiện chính | 2-3 cảnh |
 | 3000-6000 | 2-3 sự kiện chính | 3-5 cảnh |
 
 **Nguyên tắc**: Mỗi chương phải có ít nhất một sự kiện cốt lõi không thể bỏ. Nếu một sự kiện có thể loại bỏ mà không ảnh hưởng đến sự hiểu biết, thì nên xóa nó đi.

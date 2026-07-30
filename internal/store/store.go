@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -62,6 +63,36 @@ func NewStore(dir string) *Store {
 
 // Dir trả về thư mục gốc đầu ra.
 func (s *Store) Dir() string { return s.dir }
+
+// ResetAll xóa toàn bộ dữ liệu dự án và khởi tạo lại cấu trúc thư mục rỗng.
+// Dùng cho lệnh /new từ TUI.
+func (s *Store) ResetAll() error {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+
+	dir := s.dir
+	dataDirs := []string{
+		"chapters", "drafts", "summaries", "reviews", "meta",
+	}
+	for _, d := range dataDirs {
+		if err := os.RemoveAll(filepath.Join(dir, d)); err != nil {
+			return fmt.Errorf("remove %s: %w", d, err)
+		}
+	}
+
+	rootFiles := []string{
+		"premise.md", "outline.md", "outline.json",
+		"characters.json", "characters.md",
+		"world_rules.md", "world_building.md",
+	}
+	for _, f := range rootFiles {
+		if err := os.Remove(filepath.Join(dir, f)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", f, err)
+		}
+	}
+
+	return s.Init()
+}
 
 // CheckConsistency thực hiện một lần kiểm tra nông trên tầng dữ liệu, dùng để sinh cảnh báo khi khởi động/phục hồi.
 // Hoàn toàn chỉ đọc: không sửa dữ liệu, chỉ trả về mô tả vấn đề có thể đọc được. Bên gọi quyết định cách hiển thị (log / UI).

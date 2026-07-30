@@ -159,6 +159,11 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 			h.notifier.Send(notify.Notification{Kind: "budget", Level: "warn", Title: "ainovel: Ngân sách", Body: blind})
 		})
 	}
+	// Fix 3C: lưu HumanGateEvery vào store để gate và dispatcher đọc cùng giá trị.
+	if err := store.Progress.SetHumanGateEvery(cfg.Quality.HumanGateEvery); err != nil {
+		slog.Warn("failed to save human_gate_every to store", "err", err)
+	}
+
 	h.router = flow.NewDispatcher(coordinator, store)
 	h.router.HumanGateEvery = cfg.Quality.HumanGateEvery
 	h.router.QualityReviewInterval = cfg.Quality.ReviewInterval
@@ -1186,6 +1191,8 @@ func (h *Host) startHumanGateTimer(chapter int, timeout time.Duration) {
 			h.notifier.Send(notify.Notification{Kind: "repeat", Level: "warn", Title: "ainovel: Human gate timeout", Body: body})
 			// Auto-ack để tiến trình tiếp tục
 			_ = h.store.World.SaveHumanGateAck(chapter, "auto-accept: timeout")
+			// Fix 1E: Xóa frozen marker khi auto-accept.
+			_ = h.store.Progress.ClearHumanGateFreeze()
 			// Trigger dispatch để tiếp tục
 			h.router.Dispatch()
 		}
@@ -1193,6 +1200,23 @@ func (h *Host) startHumanGateTimer(chapter int, timeout time.Duration) {
 		// Host đóng, hủy timer
 		return
 	}
+}
+
+// ResetAll xóa toàn bộ dữ liệu dự án và đặt host về trạng thái chờ tạo mới.
+// Dùng cho lệnh /new từ TUI.
+func (h *Host) ResetAll() error {
+	h.Abort()
+
+	h.mu.Lock()
+	h.lifecycle = lifecycleIdle
+	h.mu.Unlock()
+
+	if err := h.store.ResetAll(); err != nil {
+		return fmt.Errorf("reset store: %w", err)
+	}
+
+	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "Đã xóa dự án cũ, sẵn sàng tạo mới", Level: "info"})
+	return nil
 }
 
 // ResetToChapter quay lui sáng tác về chương target (0 = sau architect, trước khi viết chương nào).

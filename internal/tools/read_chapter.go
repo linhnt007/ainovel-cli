@@ -97,6 +97,10 @@ func (t *ReadChapterTool) Execute(_ context.Context, args json.RawMessage) (json
 	}
 
 	// Chế độ 3: đọc một chương
+	// P5: Mặc định đọc chương 1 khi không chỉ định chapter/from/to, tránh lỗi không cần thiết.
+	if a.Chapter <= 0 && a.From <= 0 && a.To <= 0 {
+		a.Chapter = 1
+	}
 	if a.Chapter <= 0 {
 		return nil, fmt.Errorf("chapter is required")
 	}

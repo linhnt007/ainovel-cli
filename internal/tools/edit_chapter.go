@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/voocel/agentcore/schema"
 	agentcoretools "github.com/voocel/agentcore/tools"
@@ -98,14 +99,19 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 		return nil, err
 	}
 
+	// P2: Normalize whitespace để tăng khả năng match — LLM thường không khớp chính xác
+	// whitespace/newlines so với nội dung thực tế trong file.
+	normalizedOld := normalizeEditWhitespace(a.OldString)
+	normalizedNew := normalizeEditWhitespace(a.NewString)
+
 	// Ủy quyền cho agentcore.EditTool thực hiện tìm-thay
 	subArgs, _ := json.Marshal(map[string]any{
 		"path":        fmt.Sprintf("drafts/%02d.draft.md", a.Chapter),
 		"file_path":   fmt.Sprintf("drafts/%02d.draft.md", a.Chapter),
-		"old_text":    a.OldString,
-		"old_string":  a.OldString,
-		"new_text":    a.NewString,
-		"new_string":  a.NewString,
+		"old_text":    normalizedOld,
+		"old_string":  normalizedOld,
+		"new_text":    normalizedNew,
+		"new_string":  normalizedNew,
 		"replace_all": a.ReplaceAll,
 	})
 	result, err := t.edit.Execute(ctx, subArgs)
@@ -134,6 +140,19 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 //   - Đã có bản nháp → trả về ngay
 //   - Không có bản nháp nhưng có bản hoàn chỉnh → sao chép bản hoàn chỉnh vào drafts làm điểm khởi đầu chỉnh sửa (phổ biến trong cảnh chỉnh sửa)
 //   - Cả hai đều không có → báo lỗi, nhắc dùng draft_chapter tạo bản nháp trước
+// normalizeEditWhitespace chuẩn hóa whitespace: thay \r\n → \n, \t → space, collapse nhiều space liên tiếp.
+// Giúp edit_chapter match được old_string ngay cả khi LLM viết khác whitespace một chút.
+func normalizeEditWhitespace(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\t", " ")
+	// Collapse multiple spaces into one (giữ nguyên newlines)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.Join(strings.Fields(line), " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (t *EditChapterTool) ensureDraft(chapter int) error {
 	draft, err := t.store.Drafts.LoadDraft(chapter)
 	if err != nil {

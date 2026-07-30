@@ -379,7 +379,7 @@ Muốn thêm kiểm tra cứng (số từ, từ cấm), thêm phần front matte
 
 ```markdown
 ---
-chapter_words: 2000-4000
+chapter_words: 3000-6000
 forbidden_phrases:
   - không khỏi
   - bỗng dưng

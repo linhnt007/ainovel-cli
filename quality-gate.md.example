@@ -4,10 +4,10 @@
 # Hoặc đặt vào ~/.ainovel/rules/quality-gate.md để áp dụng cho tất cả sách.
 # ───────────────────────────────────────────────────────────
 
-# Số từ tối thiểu mỗi chương: 2500 từ (đếm từ thật, tách theo khoảng trắng).
-# Viết dưới 2500 từ = warning (chapter_words luôn warning, không error).
-# Phạm vi 2500-6000 từ cho phép viết chương dài mà không bị chặn.
-chapter_words: 2500-6000
+# Số từ tối thiểu mỗi chương: 3000 từ (đếm từ thật, tách theo khoảng trắng).
+# Viết dưới 3000 từ = warning (chapter_words luôn warning, không error).
+# Phạm vi 3000-6000 từ cho phép viết chương dài mà không bị chặn.
+chapter_words: 3000-6000
 
 # Từ sáo rỗng nghiêm ngặt hơn mặc định.
 # Ngưỡng 1 = xuất hiện 1 lần là warning.

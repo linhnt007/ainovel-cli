@@ -271,7 +271,7 @@ func renderModelSwitchBar(width int, state *modelSwitchState) string {
 		hint,
 	}
 	if state.message != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(colorError).Italic(true).Render(truncate(state.message, width-8)))
+		lines = append(lines, lipgloss.NewStyle().Foreground(colorError).Italic(true).Render(state.message))
 	}
 
 	content := strings.Join(lines, "\n")

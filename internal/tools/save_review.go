@@ -81,7 +81,7 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	for i := range r.Dimensions {
 		r.Dimensions[i].Verdict = expectedDimensionVerdict(r.Dimensions[i].Score)
 	}
-	if err := validateReviewEntry(r); err != nil {
+	if err := validateReviewEntry(&r); err != nil {
 		return nil, err
 	}
 
@@ -260,9 +260,10 @@ var expectedReviewDimensions = map[string]struct{}{
 	"aesthetic":   {},
 }
 
-func validateReviewEntry(r domain.ReviewEntry) error {
+func validateReviewEntry(r *domain.ReviewEntry) error {
+	// P4: Mặc định scope = "chapter" khi LLM không cung cấp, tránh lỗi không cần thiết.
 	if strings.TrimSpace(r.Scope) == "" {
-		return fmt.Errorf("scope is required")
+		r.Scope = "chapter"
 	}
 	if strings.TrimSpace(r.Summary) == "" {
 		return fmt.Errorf("summary is required")

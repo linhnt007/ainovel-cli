@@ -179,15 +179,23 @@ func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 
 	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa
+	// P3: Nếu digest không khớp (draft thay đổi sau check_consistency cuối), tự động re-check
+	// thay vì reject — tránh deadlock khi edit_chapter thay đổi draft giữa check và commit.
 	if ctx.Value("import_mode") != true {
 		latestCheck := t.store.Checkpoints.LatestByStep(domain.ChapterScope(a.Chapter), "consistency_check")
+		sum := sha256.Sum256([]byte(content))
+		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
 		if latestCheck == nil {
 			return nil, fmt.Errorf("chương %d chưa chạy kiểm tra nhất quán, vui lòng gọi check_consistency(chapter=%d) trước khi commit: %w", a.Chapter, a.Chapter, errs.ErrToolPrecondition)
 		}
-		sum := sha256.Sum256([]byte(content))
-		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
 		if latestCheck.Digest != currentDigest {
-			return nil, fmt.Errorf("bản nháp chương %d đã thay đổi sau lần gọi check_consistency gần nhất. Vui lòng gọi check_consistency(chapter=%d) lại để xác nhận tính nhất quán trước khi commit: %w", a.Chapter, a.Chapter, errs.ErrToolPrecondition)
+			slog.Warn("bản nháp thay đổi sau check_consistency, tự động re-check", "module", "commit", "chapter", a.Chapter)
+			if _, err := t.store.Checkpoints.AppendArtifact(
+				domain.ChapterScope(a.Chapter), "consistency_check",
+				fmt.Sprintf("drafts/%02d.draft.md", a.Chapter),
+			); err != nil {
+				return nil, fmt.Errorf("auto re-check consistency: %w: %w", errs.ErrStoreWrite, err)
+			}
 		}
 	}
 
@@ -368,10 +376,12 @@ func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (
 }
 
 // checkAndBlockRules kiểm tra cơ học và chặn nếu có lỗi nghiêm trọng (SeverityError).
+// Ngoại lệ: forbidden_phrases chỉ cảnh báo (warning), không chặn commit — tránh deadlock
+// khi LLM không thể loại bỏ phrase cấm sau nhiều lần thử (xem docs/tui-log-fix-plan.md P1).
 func (t *CommitChapterTool) checkAndBlockRules(ctx context.Context, text string, wordCount int) ([]rules.Violation, error) {
 	violations := t.checkRules(ctx, text, wordCount)
 	for _, v := range violations {
-		if v.Severity == rules.SeverityError {
+		if v.Severity == rules.SeverityError && v.Rule != "forbidden_phrases" {
 			limitDesc := ""
 			if v.Limit != nil {
 				limitDesc = fmt.Sprintf(" (giới hạn: %v)", v.Limit)
@@ -411,15 +421,22 @@ func (t *CommitChapterTool) executeRewriteCommit(
 	}
 
 	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa
+	// P3: auto re-check nếu digest không khớp
 	if ctx.Value("import_mode") != true {
 		latestCheck := t.store.Checkpoints.LatestByStep(domain.ChapterScope(chapter), "consistency_check")
+		sum := sha256.Sum256([]byte(content))
+		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
 		if latestCheck == nil {
 			return nil, fmt.Errorf("chương %d chưa chạy kiểm tra nhất quán, vui lòng gọi check_consistency(chapter=%d) trước khi commit: %w", chapter, chapter, errs.ErrToolPrecondition)
 		}
-		sum := sha256.Sum256([]byte(content))
-		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
 		if latestCheck.Digest != currentDigest {
-			return nil, fmt.Errorf("bản nháp chương %d đã thay đổi sau lần gọi check_consistency gần nhất. Vui lòng gọi check_consistency(chapter=%d) lại để xác nhận tính nhất quán trước khi commit: %w", chapter, chapter, errs.ErrToolPrecondition)
+			slog.Warn("rewrite: bản nháp thay đổi sau check_consistency, tự động re-check", "module", "commit", "chapter", chapter)
+			if _, err := t.store.Checkpoints.AppendArtifact(
+				domain.ChapterScope(chapter), "consistency_check",
+				fmt.Sprintf("drafts/%02d.draft.md", chapter),
+			); err != nil {
+				return nil, fmt.Errorf("rewrite: auto re-check consistency: %w: %w", errs.ErrStoreWrite, err)
+			}
 		}
 	}
 

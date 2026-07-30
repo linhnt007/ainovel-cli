@@ -294,22 +294,30 @@ func formatSeverityCounts(c, w, i int) string {
 	return "(" + strings.Join(parts, " / ") + ")"
 }
 
-// wrapText ngắt dòng văn bản dài một cách đơn giản.
+// wrapText ngắt dòng văn bản dài theo từ.
 func wrapText(s string, maxWidth int) string {
 	if maxWidth <= 0 || lipgloss.Width(s) <= maxWidth {
 		return s
 	}
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return ""
+	}
 	var b strings.Builder
 	lineW := 0
-	for _, r := range s {
-		w := lipgloss.Width(string(r))
-		if lineW+w > maxWidth && lineW > 0 {
-			b.WriteRune('\n')
-			b.WriteString("  ") // indent continuation
-			lineW = 2
+	for i, word := range words {
+		wordW := lipgloss.Width(word)
+		if i > 0 {
+			if lineW+1+wordW > maxWidth {
+				b.WriteString("\n  ")
+				lineW = 2
+			} else {
+				b.WriteRune(' ')
+				lineW++
+			}
 		}
-		b.WriteRune(r)
-		lineW += w
+		b.WriteString(word)
+		lineW += wordW
 	}
 	return b.String()
 }

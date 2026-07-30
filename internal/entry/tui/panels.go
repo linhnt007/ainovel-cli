@@ -131,7 +131,7 @@ func renderStateContent(snap host.UISnapshot, contentW int) string {
 
 	if snap.RecoveryLabel != "" {
 		sections = append(sections, lipgloss.NewStyle().Foreground(colorMuted).Italic(true).
-			Render(truncate(snap.RecoveryLabel, contentW)))
+			Render(strings.Join(wrapRunes(snap.RecoveryLabel, contentW), "\n")))
 	}
 
 	var overview strings.Builder
@@ -163,7 +163,7 @@ func renderStateContent(snap host.UISnapshot, contentW int) string {
 		if !snap.IsRunning {
 			label = "Chờ tiếp tục"
 		}
-		overview.WriteString(renderHighlightField(label, truncate(headline, contentW-10)))
+		overview.WriteString(renderHighlightField(label, strings.Join(wrapRunes(headline, contentW-10), "\n")))
 	}
 	sections = append(sections, renderSidebarSection("Tổng quan", overview.String(), contentW))
 
@@ -174,7 +174,7 @@ func renderStateContent(snap host.UISnapshot, contentW int) string {
 			agentBody.WriteString("\n")
 		}
 		if len(idleAgents) > 0 {
-			agentBody.WriteString(lipgloss.NewStyle().Foreground(colorDim).Render("Chờ: " + truncate(strings.Join(idleAgents, " · "), max(8, contentW-2))))
+			agentBody.WriteString(lipgloss.NewStyle().Foreground(colorDim).Render("Chờ: " + strings.Join(wrapRunes(strings.Join(idleAgents, " · "), max(8, contentW-4)), "\n  ")))
 			agentBody.WriteString("\n")
 		}
 		sections = append(sections, renderSidebarSection("Nhân vật đang chạy", agentBody.String(), contentW))
@@ -184,14 +184,14 @@ func renderStateContent(snap host.UISnapshot, contentW int) string {
 		var rewrite strings.Builder
 		rewrite.WriteString(renderHighlightField("Hàng đợi", fmt.Sprintf("%v", snap.PendingRewrites)))
 		if snap.RewriteReason != "" {
-			rewrite.WriteString(renderField("Lý do", truncate(snap.RewriteReason, contentW-10)))
+			rewrite.WriteString(renderField("Lý do", strings.Join(wrapRunes(snap.RewriteReason, contentW-10), "\n")))
 		}
 		sections = append(sections, renderSidebarSection("Viết lại", rewrite.String(), contentW))
 	}
 
 	if snap.PendingSteer != "" {
 		sections = append(sections, renderSidebarSection("Can thiệp",
-			renderHighlightField("Đang chờ", truncate(snap.PendingSteer, contentW-10)), contentW))
+			renderHighlightField("Đang chờ", strings.Join(wrapRunes(snap.PendingSteer, contentW-10), "\n")), contentW))
 	}
 
 	if body := renderUsageSidebar(snap, contentW); body != "" {
@@ -218,7 +218,9 @@ func renderAgentLine(agent host.AgentSnapshot, width int) string {
 
 	taskLine := agentTaskLine(agent)
 	if taskLine != "" {
-		line += "\n" + lipgloss.NewStyle().Foreground(colorDim).Render("  "+truncate(taskLine, max(8, width-2)))
+		for _, wl := range wrapRunes(taskLine, max(8, width-2)) {
+			line += "\n" + lipgloss.NewStyle().Foreground(colorDim).Render("  " + wl)
+		}
 	}
 
 	detail := agent.Summary
@@ -229,10 +231,14 @@ func renderAgentLine(agent host.AgentSnapshot, width int) string {
 		detail = ""
 	}
 	if detail != "" && detail != taskLine {
-		line += "\n" + lipgloss.NewStyle().Foreground(colorMuted).Render("  "+truncate(detail, max(8, width-2)))
+		for _, wl := range wrapRunes(detail, max(8, width-2)) {
+			line += "\n" + lipgloss.NewStyle().Foreground(colorMuted).Render("  " + wl)
+		}
 	}
 	if ctx := agentContextLine(agent); ctx != "" {
-		line += "\n" + lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render("  "+truncate(ctx, max(8, width-2)))
+		for _, wl := range wrapRunes(ctx, max(8, width-2)) {
+			line += "\n" + lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render("  " + wl)
+		}
 	}
 	return line
 }
@@ -651,7 +657,7 @@ func renderContextSidebar(snap host.UISnapshot, width int) string {
 	var b strings.Builder
 	b.WriteString(renderContextUsageField("Ngữ cảnh chính", snap.ContextPercent, snap.ContextTokens, snap.ContextWindow))
 	if strategy := contextStrategyLabel(snap.ContextStrategy); strategy != "" {
-		b.WriteString(renderField("Chiến lược gần nhất", truncate(strategy, max(8, width-12))))
+		b.WriteString(renderField("Chiến lược gần nhất", strings.Join(wrapRunes(strategy, max(8, width-12)), "\n")))
 	}
 	if scope := contextScopeLabel(snap.ContextScope); scope != "" {
 		b.WriteString(renderField("Chế độ xem hiện tại", scope))
@@ -885,43 +891,55 @@ func renderEventLine(ev host.Event, width, spinnerFrame int) string {
 
 	case ev.Category == "TOOL" && ev.Depth == 0:
 		// Công cụ của coordinator
-		var icon, sum string
+		var icon string
+		var sumStyle lipgloss.Style
 		switch {
 		case running:
 			icon = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(runningSpinner(spinnerFrame))
-			sum = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(truncate(ev.Summary, maxSumW))
+			sumStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 		case ev.Failed:
 			icon = lipgloss.NewStyle().Foreground(colorError).Bold(true).Render("✕")
-			sum = lipgloss.NewStyle().Foreground(colorError).Render(truncate(ev.Summary, maxSumW))
+			sumStyle = lipgloss.NewStyle().Foreground(colorError)
 		default:
 			icon = lipgloss.NewStyle().Foreground(colorTool).Render("◇")
-			sum = lipgloss.NewStyle().Foreground(colorTool).Render(truncate(ev.Summary, maxSumW))
+			sumStyle = lipgloss.NewStyle().Foreground(colorTool)
 		}
-		line := tsStr + " " + icon + " " + sum
+		lines := wrapStreamText(ev.Summary, maxSumW)
+		first := tsStr + " " + icon + " " + sumStyle.Render(lines[0])
+		pad := strings.Repeat(" ", 10)
+		for _, l := range lines[1:] {
+			first += "\n" + pad + sumStyle.Render(l)
+		}
 		if !running {
-			line += durStr
+			first += durStr
 		}
-		return line
+		return first
 
 	case ev.Category == "TOOL":
 		// Công cụ nội bộ của agent phụ (Depth=1)
-		var icon, sum string
+		var icon string
+		var sumStyle lipgloss.Style
 		switch {
 		case running:
 			icon = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(runningSpinner(spinnerFrame))
-			sum = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(truncate(ev.Summary, maxSumW))
+			sumStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 		case ev.Failed:
 			icon = lipgloss.NewStyle().Foreground(colorError).Bold(true).Render("✕")
-			sum = lipgloss.NewStyle().Foreground(colorError).Render(truncate(ev.Summary, maxSumW))
+			sumStyle = lipgloss.NewStyle().Foreground(colorError)
 		default:
 			icon = lipgloss.NewStyle().Foreground(colorDim).Render("├")
-			sum = lipgloss.NewStyle().Foreground(colorMuted).Render(truncate(ev.Summary, maxSumW))
+			sumStyle = lipgloss.NewStyle().Foreground(colorMuted)
 		}
-		line := tsStr + " " + indent + icon + " " + sum
+		lines := wrapStreamText(ev.Summary, maxSumW)
+		first := tsStr + " " + indent + icon + " " + sumStyle.Render(lines[0])
+		pad := strings.Repeat(" ", 10+len(indent))
+		for _, l := range lines[1:] {
+			first += "\n" + pad + sumStyle.Render(l)
+		}
 		if !running {
-			line += durStr
+			first += durStr
 		}
-		return line
+		return first
 
 	case ev.Category == "ERROR":
 		icon := lipgloss.NewStyle().Foreground(colorError).Bold(true).Render("✕")
@@ -939,38 +957,66 @@ func renderEventLine(ev host.Event, width, spinnerFrame int) string {
 
 	case ev.Category == "SYSTEM":
 		icon := lipgloss.NewStyle().Foreground(colorAccent).Render("⚙")
-		sumColor := colorMuted
+		sumStyle := lipgloss.NewStyle().Foreground(colorMuted)
 		if ev.Level == "warn" {
-			sumColor = colorAccent
+			sumStyle = lipgloss.NewStyle().Foreground(colorAccent)
 		}
-		sum := lipgloss.NewStyle().Foreground(sumColor).Render(truncate(ev.Summary, maxSumW))
-		return tsStr + " " + indent + icon + " " + sum
+		lines := wrapStreamText(ev.Summary, maxSumW)
+		first := tsStr + " " + indent + icon + " " + sumStyle.Render(lines[0])
+		pad := strings.Repeat(" ", 10+len(indent))
+		for _, l := range lines[1:] {
+			first += "\n" + pad + sumStyle.Render(l)
+		}
+		return first
 
 	case ev.Category == "USER":
 		// Echo lại văn bản Steer / Continue mà người dùng gửi từ ô nhập; khác hình thái với ⚙ của SYSTEM, dùng ✎ gợi ý "nhập liệu".
 		// Màu dùng colorAccent2 (xanh ngọc) để phân biệt với vàng của SYSTEM, tránh đọc nhầm thành tin nhắn hệ thống.
 		icon := lipgloss.NewStyle().Foreground(colorAccent2).Bold(true).Render("✎")
-		sum := lipgloss.NewStyle().Foreground(colorAccent2).Render(truncate(ev.Summary, maxSumW))
-		return tsStr + " " + indent + icon + " " + sum
+		sumStyle := lipgloss.NewStyle().Foreground(colorAccent2)
+		lines := wrapStreamText(ev.Summary, maxSumW)
+		first := tsStr + " " + indent + icon + " " + sumStyle.Render(lines[0])
+		pad := strings.Repeat(" ", 10+len(indent))
+		for _, l := range lines[1:] {
+			first += "\n" + pad + sumStyle.Render(l)
+		}
+		return first
 
 	case ev.Category == "CONTEXT" || ev.Category == "COMPACT":
 		icon := lipgloss.NewStyle().Foreground(colorContext).Render("⚙")
-		sumColor := colorContext
+		sumStyle := lipgloss.NewStyle().Foreground(colorContext)
 		if ev.Level == "debug" {
-			sumColor = colorMuted
+			sumStyle = lipgloss.NewStyle().Foreground(colorMuted)
 		}
-		sum := lipgloss.NewStyle().Foreground(sumColor).Render(truncate(ev.Summary, maxSumW))
-		return tsStr + " " + indent + icon + " " + sum
+		lines := wrapStreamText(ev.Summary, maxSumW)
+		first := tsStr + " " + indent + icon + " " + sumStyle.Render(lines[0])
+		pad := strings.Repeat(" ", 10+len(indent))
+		for _, l := range lines[1:] {
+			first += "\n" + pad + sumStyle.Render(l)
+		}
+		return first
 
 	default:
 		// Category đã biết dùng màu ánh xạ; category chưa biết theo màu mặc định terminal, tránh ép colorText.
 		if color, ok := categoryColors[ev.Category]; ok {
 			icon := lipgloss.NewStyle().Foreground(color).Render("·")
-			sum := lipgloss.NewStyle().Foreground(color).Render(truncate(ev.Summary, maxSumW))
-			return tsStr + " " + indent + icon + " " + sum
+			sumStyle := lipgloss.NewStyle().Foreground(color)
+			lines := wrapStreamText(ev.Summary, maxSumW)
+			first := tsStr + " " + indent + icon + " " + sumStyle.Render(lines[0])
+			pad := strings.Repeat(" ", 10+len(indent))
+			for _, l := range lines[1:] {
+				first += "\n" + pad + sumStyle.Render(l)
+			}
+			return first
 		}
 		icon := lipgloss.NewStyle().Foreground(colorDim).Render("·")
-		return tsStr + " " + indent + icon + " " + truncate(ev.Summary, maxSumW)
+		lines := wrapStreamText(ev.Summary, maxSumW)
+		first := tsStr + " " + indent + icon + " " + lines[0]
+		pad := strings.Repeat(" ", 10+len(indent))
+		for _, l := range lines[1:] {
+			first += "\n" + pad + l
+		}
+		return first
 	}
 }
 
@@ -1331,32 +1377,35 @@ func orderedListPrefix(line string) string {
 }
 
 func wrapRunes(text string, width int) []string {
-	if text == "" {
-		return []string{""}
-	}
-	if width < 2 {
+	if text == "" || width < 2 {
 		return []string{text}
 	}
 
-	var lines []string
-	var current strings.Builder
-	currentWidth := 0
-
-	for _, r := range text {
-		rw := lipgloss.Width(string(r))
-		if currentWidth > 0 && currentWidth+rw > width {
-			lines = append(lines, strings.TrimRight(current.String(), " "))
-			current.Reset()
-			currentWidth = 0
-			if r == ' ' {
-				continue
-			}
-		}
-		current.WriteRune(r)
-		currentWidth += rw
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
 	}
-	if current.Len() > 0 {
-		lines = append(lines, strings.TrimRight(current.String(), " "))
+
+	var lines []string
+	var cur strings.Builder
+	curW := 0
+
+	for _, word := range words {
+		wordW := lipgloss.Width(word)
+		if curW > 0 && curW+1+wordW > width {
+			lines = append(lines, cur.String())
+			cur.Reset()
+			curW = 0
+		}
+		if curW > 0 {
+			cur.WriteRune(' ')
+			curW++
+		}
+		cur.WriteString(word)
+		curW += wordW
+	}
+	if cur.Len() > 0 {
+		lines = append(lines, cur.String())
 	}
 	if len(lines) == 0 {
 		return []string{""}
@@ -1404,13 +1453,20 @@ func renderOutlineList(snap host.UISnapshot, contentW int) string {
 			chStyle = lipgloss.NewStyle().Foreground(colorDim).Render(ch)
 			titleStyle = lipgloss.NewStyle().Foreground(colorMuted)
 		}
-		title := truncate(e.Title, contentW-6)
-		line := marker + chStyle + " " + titleStyle.Render(title)
-		if snap.InProgressChapter == e.Chapter {
-			line += lipgloss.NewStyle().Foreground(colorAccent).Italic(true).Render(" Đang tiến hành")
+		prefix := marker + chStyle + " "
+		prefixW := lipgloss.Width(prefix)
+		titleLines := wrapRunes(e.Title, max(4, contentW-prefixW))
+		for i, tl := range titleLines {
+			if i == 0 {
+				b.WriteString(prefix + titleStyle.Render(tl))
+				if snap.InProgressChapter == e.Chapter {
+					b.WriteString(lipgloss.NewStyle().Foreground(colorAccent).Italic(true).Render(" Đang tiến hành"))
+				}
+			} else {
+				b.WriteString(strings.Repeat(" ", prefixW) + titleStyle.Render(tl))
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -1498,20 +1554,25 @@ func renderOutlineCell(e host.OutlineSnapshot, snap host.UISnapshot, chNumW, tit
 // truncateWidth cắt chuỗi theo "chiều rộng thị giác" (ký tự Trung/Việt/CJK tính 2 cột), đồng nguồn với lipgloss.Width.
 // truncate thông thường tính theo số rune, với tiếng Trung sẽ cắt gấp đôi chiều rộng, không dùng được khi cần căn cột.
 func truncateWidth(s string, maxW int) string {
-	if lipgloss.Width(s) <= maxW {
+	if maxW <= 0 || lipgloss.Width(s) <= maxW {
 		return s
 	}
-	var b strings.Builder
+	cutAt := -1
 	cur := 0
-	for _, r := range s {
+	for i, r := range s {
 		rw := lipgloss.Width(string(r))
-		if cur+rw > maxW {
-			break
+		if r == ' ' && cur+rw+3 <= maxW {
+			cutAt = i + 1
 		}
-		b.WriteRune(r)
+		if cur+rw > maxW-3 {
+			if cutAt >= 0 {
+				return s[:cutAt] + "..."
+			}
+			return s[:i] + "..."
+		}
 		cur += rw
 	}
-	return b.String()
+	return s
 }
 
 // renderDetailContent xây dựng nội dung bảng chi tiết bên phải.
@@ -1542,8 +1603,10 @@ func renderDetailContent(snap host.UISnapshot, contentW int) string {
 				if snap.CompassScale != "" {
 					direction += "（" + snap.CompassScale + "）"
 				}
-				b.WriteString(compassStyle.Render(truncate(direction, contentW)))
-				b.WriteString("\n")
+				for _, l := range wrapRunes(direction, contentW) {
+					b.WriteString(compassStyle.Render(l))
+					b.WriteString("\n")
+				}
 			}
 		}
 		b.WriteString("\n")
@@ -1554,8 +1617,14 @@ func renderDetailContent(snap host.UISnapshot, contentW int) string {
 		b.WriteString(panelTitleStyle.Render(":: Nhân vật"))
 		b.WriteString("\n")
 		for _, c := range snap.Characters {
-			b.WriteString(cardContentStyle.Render("· " + truncate(c, contentW-2)))
-			b.WriteString("\n")
+			for i, l := range wrapRunes("· "+c, contentW) {
+				if i == 0 {
+					b.WriteString(cardContentStyle.Render(l))
+				} else {
+					b.WriteString(cardContentStyle.Render("  " + l))
+				}
+				b.WriteString("\n")
+			}
 		}
 		b.WriteString("\n")
 	}
@@ -1564,11 +1633,19 @@ func renderDetailContent(snap host.UISnapshot, contentW int) string {
 	if snap.SupportingCount > 0 {
 		b.WriteString(panelTitleStyle.Render(":: Nhân vật phụ"))
 		b.WriteString("\n")
-		b.WriteString(cardContentStyle.Render(truncate(fmt.Sprintf("Đã xuất hiện: %d nhân vật", snap.SupportingCount), contentW)))
-		b.WriteString("\n")
-		for _, name := range snap.RecentSupporting {
-			b.WriteString(cardContentStyle.Render("· " + truncate(name, contentW-2)))
+		for _, l := range wrapRunes(fmt.Sprintf("Đã xuất hiện: %d nhân vật", snap.SupportingCount), contentW) {
+			b.WriteString(cardContentStyle.Render(l))
 			b.WriteString("\n")
+		}
+		for _, name := range snap.RecentSupporting {
+			for i, l := range wrapRunes("· "+name, contentW) {
+				if i == 0 {
+					b.WriteString(cardContentStyle.Render(l))
+				} else {
+					b.WriteString(cardContentStyle.Render("  " + l))
+				}
+				b.WriteString("\n")
+			}
 		}
 		b.WriteString("\n")
 	}
@@ -1602,8 +1679,10 @@ func renderDetailContent(snap host.UISnapshot, contentW int) string {
 		b.WriteString(cardTitleStyle.Render("~ Tóm tắt ~"))
 		b.WriteString("\n")
 		for _, s := range snap.RecentSummaries {
-			b.WriteString(cardContentStyle.Render(truncate(s, contentW)))
-			b.WriteString("\n")
+			for _, l := range wrapRunes(s, contentW) {
+				b.WriteString(cardContentStyle.Render(l))
+				b.WriteString("\n")
+			}
 		}
 	}
 

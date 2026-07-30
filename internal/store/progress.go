@@ -452,6 +452,83 @@ func (s *ProgressStore) ValidateChapterWork(chapter int) error {
 	return fmt.Errorf("chương %d không có trong hàng đợi %s, hàng đợi hiện tại: %v. Hãy xử lý các chương trong hàng đợi trước, rồi mới sang chương mới: %w", chapter, verb, p.PendingRewrites, errs.ErrToolConflict)
 }
 
+// SetHumanGateFreeze ghi chapter vào frozen marker.
+// Gọi từ Dispatcher trong WithWriteLock context (hoặc tự acquire lock).
+func (s *ProgressStore) SetHumanGateFreeze(chapter int) error {
+	return s.io.WithWriteLock(func() error {
+		p, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			p = &domain.Progress{}
+		}
+		p.HumanGateFreeze = chapter
+		return s.saveUnlocked(p)
+	})
+}
+
+// ClearHumanGateFreeze xóa frozen marker (khi user ack gate).
+func (s *ProgressStore) ClearHumanGateFreeze() error {
+	return s.io.WithWriteLock(func() error {
+		p, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return nil
+		}
+		p.HumanGateFreeze = 0
+		return s.saveUnlocked(p)
+	})
+}
+
+// IsHumanGateFrozen kiểm tra frozen marker cho chapter cụ thể.
+// chapter==0 → kiểm tra bất kỳ frozen nào.
+func (s *ProgressStore) IsHumanGateFrozen(chapter int) bool {
+	p, err := s.Load()
+	if err != nil || p == nil {
+		return false
+	}
+	if chapter > 0 {
+		return p.HumanGateFreeze == chapter
+	}
+	return p.HumanGateFreeze > 0
+}
+
+// HumanGateFrozenChapter trả về chapter đang frozen, 0 = không frozen.
+func (s *ProgressStore) HumanGateFrozenChapter() int {
+	p, err := s.Load()
+	if err != nil || p == nil {
+		return 0
+	}
+	return p.HumanGateFreeze
+}
+
+// SetHumanGateEvery lưu giá trị vào progress. Gọi 1 lần khi config loaded.
+func (s *ProgressStore) SetHumanGateEvery(every int) error {
+	return s.io.WithWriteLock(func() error {
+		p, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			p = &domain.Progress{}
+		}
+		p.HumanGateEvery = every
+		return s.saveUnlocked(p)
+	})
+}
+
+// HumanGateEvery trả về giá trị đã lưu, 0 = tắt.
+func (s *ProgressStore) HumanGateEvery() int {
+	p, err := s.Load()
+	if err != nil || p == nil {
+		return 0
+	}
+	return p.HumanGateEvery
+}
+
 func normalizePendingRewrites(chapters, completed []int) ([]int, error) {
 	if len(chapters) == 0 {
 		return nil, nil

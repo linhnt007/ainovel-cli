@@ -38,7 +38,7 @@ func TestCompletePhaseGate_BlocksSubagentAtComplete(t *testing.T) {
 		t.Fatalf("UpdatePhase: %v", err)
 	}
 
-	gate := completePhaseGate(st)
+	gate := qualityControlGate(st, bootstrap.Config{})
 	decision, err := gate(context.Background(), subagentCall(`{"agent":"writer","task":"写第 1 章"}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -54,7 +54,7 @@ func TestCompletePhaseGate_BlocksSubagentAtComplete(t *testing.T) {
 func TestCompletePhaseGate_AllowsSubagentWhenWriting(t *testing.T) {
 	st := newTestStore(t)
 
-	gate := completePhaseGate(st)
+	gate := qualityControlGate(st, bootstrap.Config{})
 	decision, err := gate(context.Background(), subagentCall(`{"agent":"writer","task":"写第 1 章"}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -70,7 +70,7 @@ func TestCompletePhaseGate_AllowsNonSubagentAtComplete(t *testing.T) {
 		t.Fatalf("UpdatePhase: %v", err)
 	}
 
-	gate := completePhaseGate(st)
+	gate := qualityControlGate(st, bootstrap.Config{})
 	for _, name := range []string{"novel_context", "ask_user"} {
 		decision, err := gate(context.Background(), toolCall(name))
 		if err != nil {
@@ -85,7 +85,7 @@ func TestCompletePhaseGate_AllowsNonSubagentAtComplete(t *testing.T) {
 func TestCompletePhaseGate_AllowsWhenNoProgress(t *testing.T) {
 	st := store.NewStore(t.TempDir())
 
-	gate := completePhaseGate(st)
+	gate := qualityControlGate(st, bootstrap.Config{})
 	decision, err := gate(context.Background(), subagentCall(`{"agent":"writer","task":"写第 1 章"}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

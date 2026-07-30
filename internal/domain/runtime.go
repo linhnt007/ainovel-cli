@@ -71,6 +71,12 @@ type Progress struct {
 	// NeedsRewriteReview: chương cần đánh giá lại sau khi viết lại xong (hàng đợi PendingRewrites đã rút hết).
 	// Router step 3.5 sẽ dispatch editor re-review trước khi tiếp tục flow bình thường.
 	NeedsRewriteReview int `json:"needs_rewrite_review,omitempty"`
+	// HumanGateFreeze: chapter number bị frozen khi human gate trigger, 0 = không frozen.
+	// Dispatcher ghi khi trigger gate, gate đọc marker này để chặn (không phụ thuộc config snapshot).
+	HumanGateFreeze int `json:"human_gate_freeze,omitempty"`
+	// HumanGateEvery: tần suất human gate đã lưu từ config, 0 = tắt.
+	// Lưu vào store để gate và dispatcher đọc cùng giá trị, không phụ thuộc config snapshot.
+	HumanGateEvery int `json:"human_gate_every,omitempty"`
 }
 
 // IsResumable kiểm tra xem có thể tiếp tục từ điểm ngắt hay không.

@@ -96,12 +96,32 @@ func formatNumber(n int) string {
 }
 
 func truncate(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) <= max {
+	if max <= 0 || lipgloss.Width(s) <= max {
 		return s
 	}
 	if max < 4 {
-		return string(runes[:max])
+		cur := 0
+		for i, r := range s {
+			cur += lipgloss.Width(string(r))
+			if cur > max {
+				return s[:i]
+			}
+		}
 	}
-	return string(runes[:max-3]) + "..."
+	cutAt := -1
+	cur := 0
+	for i, r := range s {
+		rw := lipgloss.Width(string(r))
+		if r == ' ' && cur+rw+3 <= max {
+			cutAt = i + 1
+		}
+		if cur+rw > max-3 {
+			if cutAt >= 0 {
+				return s[:cutAt] + "..."
+			}
+			return s[:i] + "..."
+		}
+		cur += rw
+	}
+	return s
 }

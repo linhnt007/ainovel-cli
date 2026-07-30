@@ -173,8 +173,12 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		result["count"] = len(rules)
 
 	case "expand_arc":
-		if a.Volume <= 0 || a.Arc <= 0 {
-			return nil, fmt.Errorf("expand_arc requires volume and arc parameters: %w", errs.ErrToolArgs)
+		// P6: Mặc định volume=1, arc=1 khi LLM không cung cấp, tránh lỗi không cần thiết.
+		if a.Volume <= 0 {
+			a.Volume = 1
+		}
+		if a.Arc <= 0 {
+			a.Arc = 1
 		}
 		var chapters []domain.OutlineEntry
 		if err := decode("expand_arc chapters", &chapters); err != nil {

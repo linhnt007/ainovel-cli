@@ -34,8 +34,8 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-DEFAULT_MIN_WORDS = 3000
-DEFAULT_MAX_WORDS = 6000
+DEFAULT_MIN_WORDS = 2000
+DEFAULT_MAX_WORDS = 4000
 DEFAULT_PATTERN = 'Chương*.md'
 
 STATUS_UNDER = 'DƯỚI NGƯỠNG'

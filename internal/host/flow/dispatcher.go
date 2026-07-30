@@ -17,7 +17,8 @@ type Dispatcher struct {
 	coordinator *agentcore.Agent
 	store       *storepkg.Store
 
-	enabled atomic.Bool // do Host kiểm soát có phát lệnh hay không (nên tắt trước khi khởi động xong)
+	enabled    atomic.Bool  // do Host kiểm soát có phát lệnh hay không (nên tắt trước khi khởi động xong)
+	gateActive atomic.Int32 // Fix 2A: chapter đang gate, 0 = không active. Dùng atomic vì Dispatch() có thể gọi từ goroutine khác.
 
 	// Theo dõi lặp: ghi nhớ Agent+Task đã phát lần gần nhất và số lần phát liên tiếp.
 	// Cùng một lệnh tính lại (agent phụ trả về nhưng trạng thái chưa tiến, Route tính lại ra cùng kết quả) không bị nuốt yên lặng,
@@ -115,6 +116,14 @@ func (d *Dispatcher) handle(ev agentcore.Event) {
 	if !d.enabled.Load() {
 		return
 	}
+	// Fix 2B: gate active → ignore subagent/reopen_book tool events
+	if d.gateActive.Load() > 0 && (ev.Tool == "subagent" || ev.Tool == "reopen_book") {
+		if ev.Type == agentcore.EventToolExecEnd {
+			slog.Debug("dispatcher: gate active, ignoring event",
+				"tool", ev.Tool, "gate_chapter", d.gateActive.Load())
+			return
+		}
+	}
 	// Cả tool thành công lẫn tool bị gate chặn (IsError=true) đều cần route lại:
 	// - Thành công → tiến trình đã thay đổi, cần quyết định bước tiếp.
 	// - Gate chặn (vd: chưa review mà đòi gọi writer) → coordinator đang lạc hướng,
@@ -134,10 +143,31 @@ func (d *Dispatcher) Dispatch() {
 	if len(state.LoadWarnings) > 0 && d.onDegraded != nil {
 		d.onDegraded(state.LoadWarnings)
 	}
-	state.HumanGateEvery = d.HumanGateEvery
+	// Fix 3E: đọc HumanGateEvery từ store (đồng bộ với gate), fallback về field.
+	if storedEvery := d.store.Progress.HumanGateEvery(); storedEvery > 0 {
+		state.HumanGateEvery = storedEvery
+	} else {
+		state.HumanGateEvery = d.HumanGateEvery
+	}
 	state.QualityReviewInterval = d.QualityReviewInterval
 	if state.LastCompleted > 0 && state.HumanGateEvery > 0 && state.LastCompleted%state.HumanGateEvery == 0 && !d.store.World.HasHumanGateAck(state.LastCompleted) {
 		state.HumanGatePending = true
+	}
+
+	// Fix 2D: auto-clear gateActive nếu gate đã ack.
+	if d.gateActive.Load() > 0 {
+		if state.HumanGateEvery <= 0 || d.store.World.HasHumanGateAck(int(d.gateActive.Load())) {
+			d.gateActive.Store(0)
+		}
+	}
+
+	// Fix 1F: auto-clear frozen marker nếu gate đã được ack (survive restart).
+	if frozenCh := d.store.Progress.HumanGateFrozenChapter(); frozenCh > 0 {
+		if d.store.World.HasHumanGateAck(frozenCh) {
+			if err := d.store.Progress.ClearHumanGateFreeze(); err != nil {
+				slog.Warn("failed to clear stale freeze on resume", "err", err)
+			}
+		}
 	}
 
 	inst := Route(state)
@@ -160,6 +190,15 @@ func (d *Dispatcher) Dispatch() {
 
 	if inst.Agent == "" && state.HumanGatePending {
 		slog.Info("Mốc duyệt người dùng: không gọi subagent, thông báo người dùng và chờ", "module", "host.flow", "chapter", state.LastCompleted)
+
+		// Fix 2C: set gateActive khi trigger gate.
+		d.gateActive.Store(int32(state.LastCompleted))
+
+		// Fix 1D: ghi frozen marker.
+		if err := d.store.Progress.SetHumanGateFreeze(state.LastCompleted); err != nil {
+			slog.Warn("failed to set human gate freeze", "err", err)
+		}
+
 		if d.onHumanGate != nil {
 			d.onHumanGate(state.LastCompleted)
 		}
@@ -233,4 +272,5 @@ func (d *Dispatcher) ResetRepeat() {
 	defer d.lastMu.Unlock()
 	d.lastSent = nil
 	d.repeats = 0
+	d.gateActive.Store(0) // Fix 2E: reset gateActive
 }

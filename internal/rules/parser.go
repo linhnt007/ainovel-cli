@@ -127,7 +127,7 @@ func applyField(p *Parsed, key string, val any) {
 				Source: p.Source,
 				Kind:   ConflictInvalidValue,
 				Field:  key,
-				Detail: fmt.Sprintf("chapter_words cần khoảng \"min-max\" (vd 3000-6000) hoặc giá trị đơn (vd 2500), nhận được %v", val),
+				Detail: fmt.Sprintf("chapter_words cần khoảng \"min-max\" (vd 2000-4000) hoặc giá trị đơn (vd 2500), nhận được %v", val),
 			})
 			return
 		}
@@ -160,7 +160,7 @@ func applyField(p *Parsed, key string, val any) {
 }
 
 // parseChapterWords phân tích khoảng số từ mỗi chương thành *WordRange, chấp nhận ba cách viết:
-//   - chuỗi khoảng "min-max" (vd "3000-6000")
+//   - chuỗi khoảng "min-max" (vd "2000-4000")
 //   - ánh xạ {min, max}
 //   - số nguyên dương N đơn (số trần 2500 hoặc chuỗi "2500") — hiểu là "mục tiêu N từ/chương",
 //     tự động mở rộng thành khoảng N±20%. Nếu không, người dùng viết giá trị đơn theo trực giác
