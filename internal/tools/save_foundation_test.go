@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
@@ -280,6 +281,63 @@ func TestSaveFoundationAppendVolumeRejectsAfterComplete(t *testing.T) {
 	})
 	if _, err := tool.Execute(context.Background(), appendArgs); err == nil {
 		t.Fatal("expected error when appending after Phase=Complete")
+	}
+}
+
+func TestSaveFoundationLayeredOutlineNormalizesIndices(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 0); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewSaveFoundationTool(s)
+
+	// LLM trả volume index=0 và arc index trùng 0 — phải được chuẩn hóa về 1..N
+	args, _ := json.Marshal(map[string]any{
+		"type": "layered_outline",
+		"content": []map[string]any{
+			{
+				"index": 0, "title": "Tập 1", "theme": "A",
+				"arcs": []map[string]any{
+					{"index": 0, "title": "Cung 1", "goal": "g1", "chapters": []map[string]any{{"title": "Chương 1", "core_event": "mở"}}},
+					{"index": 0, "title": "Cung 2", "goal": "g2"},
+				},
+			},
+			{
+				"index": 0, "title": "Tập 2", "theme": "B",
+				"arcs": []map[string]any{{"index": 0, "title": "Cung 1", "goal": "g1"}},
+			},
+		},
+	})
+	if _, err := tool.Execute(context.Background(), args); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	volumes, err := s.Outline.LoadLayeredOutline()
+	if err != nil {
+		t.Fatalf("LoadLayeredOutline: %v", err)
+	}
+	if len(volumes) != 2 {
+		t.Fatalf("expected 2 volumes, got %d", len(volumes))
+	}
+	if volumes[0].Index != 1 || volumes[1].Index != 2 {
+		t.Fatalf("expected volume indices 1,2 after normalize, got %d,%d", volumes[0].Index, volumes[1].Index)
+	}
+	if volumes[0].Arcs[0].Index != 1 || volumes[0].Arcs[1].Index != 2 {
+		t.Fatalf("expected arc indices 1,2 after normalize, got %d,%d", volumes[0].Arcs[0].Index, volumes[0].Arcs[1].Index)
+	}
+
+	// Progress phải khớp volume/arc đầu tiên của outline (không còn index 0)
+	p, _ := s.Progress.Load()
+	if p.CurrentVolume != 1 || p.CurrentArc != 1 {
+		t.Fatalf("expected progress V1 A1, got V%d A%d", p.CurrentVolume, p.CurrentArc)
+	}
+	if !p.Layered {
+		t.Fatal("expected Layered=true")
 	}
 }
 
@@ -567,5 +625,63 @@ func TestSaveFoundationCompleteBookRejectsWithPendingRewrites(t *testing.T) {
 	progress, _ := s.Progress.Load()
 	if progress.Phase == domain.PhaseComplete {
 		t.Fatalf("phase should not be Complete with PendingRewrites: %s", progress.Phase)
+	}
+}
+
+// TestDecodeFoundationJSONTrailingText: LLM kèm văn bản sau khối JSON (lỗi
+// "invalid character '}' after top-level value" trong log) — decode phải tự cắt và thành công.
+func TestDecodeFoundationJSONTrailingText(t *testing.T) {
+	t.Run("trailing note after array", func(t *testing.T) {
+		var out []map[string]any
+		err := decodeFoundationJSON("outline", `[{"chapter":1}] — đây là outline tạm, chưa chốt`, &out)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(out) == 0 {
+			t.Fatal("expected parsed array content")
+		}
+	})
+	t.Run("trailing note after object", func(t *testing.T) {
+		var out map[string]any
+		err := decodeFoundationJSON("update_compass", `{"direction":"X","last_updated":"2026-07-31"} cần review lại`, &out)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out["direction"] != "X" {
+			t.Fatalf("expected direction X, got %v", out["direction"])
+		}
+	})
+	t.Run("fenced json block", func(t *testing.T) {
+		var out []map[string]any
+		err := decodeFoundationJSON("outline", "```json\n[{\"chapter\":1}]\n```", &out)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(out) == 0 {
+			t.Fatal("expected parsed array content")
+		}
+	})
+	t.Run("fence with prefix text", func(t *testing.T) {
+		var out map[string]any
+		err := decodeFoundationJSON("update_compass", "kết quả:\n```json\n{\"direction\":\"X\"}\n```\nđã xong", &out)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out["direction"] != "X" {
+			t.Fatalf("expected direction X, got %v", out["direction"])
+		}
+	})
+}
+
+// TestDecodeFoundationJSONKeepsErrorHint: nội dung không cứu được (giữa khối có cú pháp hỏng
+// không phải lỗi trailing) vẫn trả lỗi kèm hint, không nuốt lỗi.
+func TestDecodeFoundationJSONKeepsErrorHint(t *testing.T) {
+	var out []map[string]any
+	err := decodeFoundationJSON("outline", `[{"chapter":1,,}]`, &out)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "Nguyên nhân phổ biến") {
+		t.Fatalf("expected hint in error, got %v", err)
 	}
 }

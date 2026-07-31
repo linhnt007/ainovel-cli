@@ -339,6 +339,13 @@ const maxRewritePerChapter = 3
 // (consistency/character/continuity), thẩm mỹ yếu chỉ đáng một vòng trau chuốt cục bộ.
 const aestheticPolishThreshold = 70
 
+// polishFloor: ngưỡng chung nâng verdict lên polish cho mọi chiều (trừ aesthetic có cổng riêng).
+// Đồng bộ aestheticPolishThreshold: dưới 70 mới đáng một vòng trau chuốt. Warning band 70-79 —
+// kể cả chiều critical — giữ nguyên accept: model đã chấm accept, ép polish chỉ tạo loop
+// "chấm 75-79 → polish → lại chấm 75-79 → polish" (bài học log 06:50, character 78/pacing 75/
+// hook 75 → re-queue vô hạn dù verdict=accept).
+const polishFloor = 70
+
 // evaluateScorecardGate kiểm tra xem thẻ điểm có cần nâng cấp verdict không.
 // Trả về chuỗi rỗng nghĩa là không nâng cấp. triggeredAesthetic=true khi việc nâng cấp
 // (một phần) do aesthetic < ngưỡng — để caller đánh dấu aesthetic_polished, chặn polish
@@ -356,9 +363,9 @@ func evaluateScorecardGate(dimensions []domain.DimensionScore, aestheticAlreadyP
 			continue
 		}
 		_, isCritical := criticalDimensions[dim.Dimension]
-		if isCritical && (dim.Verdict == "fail" || dim.Score < 60) {
+		if isCritical && dim.Score < 60 {
 			criticalFails = append(criticalFails, fmt.Sprintf("%s(%d)", dim.Dimension, dim.Score))
-		} else if dim.Verdict == "warning" || (isCritical && dim.Score < 80) {
+		} else if dim.Score < polishFloor {
 			polishIssues = append(polishIssues, fmt.Sprintf("%s(%d)", dim.Dimension, dim.Score))
 		}
 	}

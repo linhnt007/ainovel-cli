@@ -106,8 +106,8 @@ func (t *DraftChapterTool) Execute(_ context.Context, args json.RawMessage) (jso
 
 	existingDraft, _ := t.store.Drafts.LoadDraft(a.Chapter)
 	existingWords := rules.CountWords(existingDraft)
-	if a.Mode != "append" && existingWords > 0 && existingWords < 1500 && rules.CountWords(a.Content) < 1500 {
-		// Bản nháp cũ chưa đủ 1500 từ và nháp mới cũng chưa đủ: tự động chuyển append để cộng dồn dung lượng
+	if a.Mode != "append" && existingWords > 0 && existingWords < 2500 && rules.CountWords(a.Content) < 2500 {
+		// Bản nháp cũ chưa đủ 2500 từ và nháp mới cũng chưa đủ: tự động chuyển append để cộng dồn dung lượng
 		a.Mode = "append"
 	}
 
@@ -128,8 +128,8 @@ func (t *DraftChapterTool) Execute(_ context.Context, args json.RawMessage) (jso
 		}
 		totalWords := rules.CountWords(full)
 		nextStep := fmt.Sprintf("Trước tiên read_chapter(chapter=%d, source=\"draft\") để đọc lại bản nháp, rồi gọi check_consistency(chapter=%d), cuối cùng commit_chapter(chapter=%d)", a.Chapter, a.Chapter, a.Chapter)
-		if totalWords < 1500 {
-			nextStep = fmt.Sprintf("Bản nháp cộng dồn hiện tại đạt %d từ (chưa đủ 1500 từ). BẮT BUỘC tiếp tục gọi draft_chapter(chapter=%d, mode=\"append\", content=...) viết tiếp cảnh tiếp theo để đạt tối thiểu 1500 từ trước khi commit_chapter.", totalWords, a.Chapter)
+		if totalWords < 2500 {
+			nextStep = fmt.Sprintf("Bản nháp cộng dồn hiện tại đạt %d từ (chưa đủ 2500 từ). BẮT BUỘC tiếp tục gọi draft_chapter(chapter=%d, mode=\"append\", content=...) viết tiếp cảnh tiếp theo để đạt tối thiểu 2500 từ trước khi commit_chapter.", totalWords, a.Chapter)
 		}
 		return json.Marshal(map[string]any{
 			"written":    true,
@@ -150,8 +150,8 @@ func (t *DraftChapterTool) Execute(_ context.Context, args json.RawMessage) (jso
 		}
 		totalWords := rules.CountWords(a.Content)
 		nextStep := fmt.Sprintf("Trước tiên read_chapter(chapter=%d, source=\"draft\") để đọc lại bản nháp, rồi gọi check_consistency(chapter=%d), cuối cùng commit_chapter(chapter=%d)", a.Chapter, a.Chapter, a.Chapter)
-		if totalWords < 1500 {
-			nextStep = fmt.Sprintf("Bản nháp hiện tại đạt %d từ (chưa đủ 1500 từ). BẮT BUỘC tiếp tục gọi draft_chapter(chapter=%d, mode=\"append\", content=...) viết tiếp các cảnh bổ sung cho đủ tối thiểu 1500 từ trước khi commit_chapter.", totalWords, a.Chapter)
+		if totalWords < 2500 {
+			nextStep = fmt.Sprintf("Bản nháp hiện tại đạt %d từ (chưa đủ 2500 từ). BẮT BUỘC tiếp tục gọi draft_chapter(chapter=%d, mode=\"append\", content=...) viết tiếp các cảnh bổ sung cho đủ tối thiểu 2500 từ trước khi commit_chapter.", totalWords, a.Chapter)
 		}
 		return json.Marshal(map[string]any{
 			"written":    true,

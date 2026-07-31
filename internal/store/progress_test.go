@@ -58,6 +58,42 @@ func TestSetFlow(t *testing.T) {
 	}
 }
 
+// TestSetHumanGateEvery_NoCreateWhenMissing: boot Host gọi SetHumanGateEvery trên
+// workspace trống (vừa xóa) — KHÔNG được tạo progress.json trống, nếu không
+// buildResumePrompt tưởng có sách dở dang → tự động sáng tác thay vì màn hình start.
+func TestSetHumanGateEvery_NoCreateWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	if err := store.Progress.SetHumanGateEvery(2); err != nil {
+		t.Fatalf("SetHumanGateEvery: %v", err)
+	}
+
+	p, err := store.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if p != nil {
+		t.Fatalf("SetHumanGateEvery phải không tạo progress khi chưa tồn tại, nhưng Load trả về %+v", p)
+	}
+}
+
+// TestSetHumanGateEvery_UpdatesExisting: sách đã có progress thì vẫn ghi được giá trị.
+func TestSetHumanGateEvery_UpdatesExisting(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	_ = store.Progress.Init("test", 10)
+
+	if err := store.Progress.SetHumanGateEvery(2); err != nil {
+		t.Fatalf("SetHumanGateEvery: %v", err)
+	}
+
+	p, _ := store.Progress.Load()
+	if p.HumanGateEvery != 2 {
+		t.Fatalf("expected human_gate_every=2, got %d", p.HumanGateEvery)
+	}
+}
+
 func TestSetNovelName(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
@@ -371,5 +407,107 @@ func TestClearPendingRewrites(t *testing.T) {
 	}
 	if p.Flow != domain.FlowWriting {
 		t.Errorf("flow should be writing, got %s", p.Flow)
+	}
+}
+
+func TestRollbackToChapter_ClearsNeedsRewriteReview(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	_ = store.Progress.Init("test", 10)
+	_ = store.Progress.MarkChapterComplete(1, 3000, "", "")
+	_ = store.Progress.SetPendingRewrites([]int{1}, "test")
+	_ = store.Progress.SetFlow(domain.FlowRewriting)
+
+	// Hoàn thành chương cuối cùng trong hàng đợi → đặt NeedsRewriteReview
+	if err := store.Progress.CompleteRewrite(1); err != nil {
+		t.Fatalf("CompleteRewrite(1): %v", err)
+	}
+	p, _ := store.Progress.Load()
+	if p.NeedsRewriteReview != 1 {
+		t.Fatalf("expected NeedsRewriteReview=1 (bug state), got %d", p.NeedsRewriteReview)
+	}
+
+	// Rollback phải xóa cờ re-review để không kẹt editor re-review sau reset
+	if err := store.RollbackToChapter(0); err != nil {
+		t.Fatalf("RollbackToChapter(0): %v", err)
+	}
+	p, _ = store.Progress.Load()
+	if p.NeedsRewriteReview != 0 {
+		t.Errorf("expected NeedsRewriteReview=0 after rollback, got %d", p.NeedsRewriteReview)
+	}
+	if len(p.PendingRewrites) != 0 {
+		t.Errorf("expected empty PendingRewrites, got %d", len(p.PendingRewrites))
+	}
+	if len(p.CompletedChapters) != 0 {
+		t.Errorf("expected empty CompletedChapters, got %d", len(p.CompletedChapters))
+	}
+	if p.CurrentChapter != 1 {
+		t.Errorf("expected CurrentChapter=1, got %d", p.CurrentChapter)
+	}
+	if p.Flow != domain.FlowWriting {
+		t.Errorf("expected flow writing, got %s", p.Flow)
+	}
+}
+
+// TestRollbackToChapter0_DerivesVolumeArcFromOutline: reset về 0 phải lấy volume/arc
+// đầu tiên từ layered outline thật, không hardcode 1/1 — dữ liệu cũ lưu index lệch
+// (vd LLM trả volume index=0) sẽ kẹt "Vn Am không tìm thấy" + expand_arc sau mỗi reset.
+func TestRollbackToChapter0_DerivesVolumeArcFromOutline(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	if err := s.Progress.Init("test", 10); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	// Outline lưu volume index lệch 0 (dữ liệu lỗi cũ), arc index 1
+	vols := []domain.VolumeOutline{{
+		Index: 0, Title: "Tập lệch", Theme: "x",
+		Arcs: []domain.ArcOutline{{Index: 1, Title: "Cung 1", Goal: "g"}},
+	}}
+	if err := s.Outline.SaveLayeredOutline(vols); err != nil {
+		t.Fatalf("SaveLayeredOutline: %v", err)
+	}
+
+	// Đưa progress về trạng thái đang viết với V/A sai lệch
+	if err := s.Progress.MarkChapterComplete(1, 3000, "", ""); err != nil {
+		t.Fatalf("MarkChapterComplete: %v", err)
+	}
+	p, _ := s.Progress.Load()
+	p.Layered = true
+	p.CurrentVolume = 7
+	p.CurrentArc = 9
+	if err := s.Progress.Save(p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := s.RollbackToChapter(0); err != nil {
+		t.Fatalf("RollbackToChapter(0): %v", err)
+	}
+	p, _ = s.Progress.Load()
+	if p.CurrentVolume != 0 || p.CurrentArc != 1 {
+		t.Errorf("expected V0 A1 derived from outline, got V%d A%d", p.CurrentVolume, p.CurrentArc)
+	}
+	if p.Layered != true {
+		t.Error("expected Layered=true preserved")
+	}
+}
+
+// TestRollbackToChapter0_FallsBackTo1WhenNoOutline: chưa có layered outline (hoặc chưa
+// phân lớp) thì rollback vẫn về 1/1 như cũ — không đổi hành vi truyện ngắn.
+func TestRollbackToChapter0_FallsBackTo1WhenNoOutline(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	if err := s.Progress.Init("test", 10); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.MarkChapterComplete(1, 3000, "", ""); err != nil {
+		t.Fatalf("MarkChapterComplete: %v", err)
+	}
+
+	if err := s.RollbackToChapter(0); err != nil {
+		t.Fatalf("RollbackToChapter(0): %v", err)
+	}
+	p, _ := s.Progress.Load()
+	if p.CurrentVolume != 1 || p.CurrentArc != 1 {
+		t.Errorf("expected fallback V1 A1, got V%d A%d", p.CurrentVolume, p.CurrentArc)
 	}
 }

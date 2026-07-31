@@ -12,6 +12,7 @@ package flow
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
@@ -71,6 +72,7 @@ type State struct {
 //  1. Phase=Complete        → nil (LLM xuất tóm tắt)
 //  2. Phase!=Writing        → nil (LLM quyết định chọn kiến trúc sư / bổ sung kế hoạch)
 //  3. PendingRewrites không rỗng  → writer viết lại/đánh bóng theo hàng đợi
+//
 // 3.5. NeedsRewriteReview > 0     → editor(re-review chương sau viết lại)
 //  4. Flow=Steering         → nil (đang xử lý can thiệp của người dùng)
 //  5. Thiếu đánh giá cuối cung truyện           → editor(arc review)
@@ -78,6 +80,7 @@ type State struct {
 //  7. Cuối tập có tóm tắt cung nhưng thiếu tóm tắt tập → editor(volume summary)
 //  8. Cung truyện tiếp theo là skeleton           → architect_long(expand_arc)
 //  9. Cuối tập cần quyết định tập tiếp theo       → architect_long(append_volume / complete_book)
+//
 // 10. Unified review: chương vừa hoàn thành chưa review → editor (single hoặc batch+single nếu mốc ReviewInterval)
 // 10.5. Human Gate Pending      → dừng chờ duyệt (/gate) (sau editor để user thấy review trước)
 // 11. Các trường hợp còn lại                  → writer(viết next_chapter)
@@ -132,7 +135,9 @@ func routeInner(s State) *Instruction {
 	}
 
 	// 3.5. Post-rewrite quality gate: re-review trước khi tiếp tục flow bình thường
-	if p.NeedsRewriteReview > 0 {
+	// Chỉ dispatch khi chương còn trong CompletedChapters — flag còn sót (stale, vd sau rollback)
+	// không được loop editor mãi.
+	if p.NeedsRewriteReview > 0 && slices.Contains(p.CompletedChapters, p.NeedsRewriteReview) {
 		return &Instruction{
 			Agent:  "editor",
 			Task:   fmt.Sprintf("Đánh giá lại chương %d sau viết lại (scope=chapter)", p.NeedsRewriteReview),

@@ -506,6 +506,8 @@ func (s *ProgressStore) HumanGateFrozenChapter() int {
 }
 
 // SetHumanGateEvery lưu giá trị vào progress. Gọi 1 lần khi config loaded.
+// KHÔNG tạo progress khi chưa tồn tại: file trống (phase="") bị buildResumePrompt
+// coi là "sách dở dang" → workspace mới trống tự động Resume → bỏ qua màn hình start.
 func (s *ProgressStore) SetHumanGateEvery(every int) error {
 	return s.io.WithWriteLock(func() error {
 		p, err := s.loadUnlocked()
@@ -513,7 +515,7 @@ func (s *ProgressStore) SetHumanGateEvery(every int) error {
 			return err
 		}
 		if p == nil {
-			p = &domain.Progress{}
+			return nil
 		}
 		p.HumanGateEvery = every
 		return s.saveUnlocked(p)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/voocel/agentcore/schema"
 	"github.com/voocel/ainovel-cli/internal/domain"
@@ -129,6 +130,15 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		}
 		if len(volumes) == 0 {
 			return nil, fmt.Errorf("layered_outline requires at least one volume: %w", errs.ErrToolArgs)
+		}
+		// Chuẩn hóa index tập/cung theo vị trí (1..N): LLM hay trả 0 hoặc index trùng,
+		// gây lệch với Progress.CurrentVolume/CurrentArc → CheckConsistency báo
+		// "Vn Am không tìm thấy" và expand_arc lỗi "arc not found" sau mỗi reset.
+		for vi := range volumes {
+			volumes[vi].Index = vi + 1
+			for ai := range volumes[vi].Arcs {
+				volumes[vi].Arcs[ai].Index = ai + 1
+			}
 		}
 		for _, vol := range volumes {
 			if len(vol.Arcs) == 0 {
@@ -338,12 +348,49 @@ func decodeFoundationJSON(typeName, content string, out any) error {
 	if err == nil {
 		return nil
 	}
-	hint := `Nguyên nhân phổ biến: dấu ngoặc kép trong giá trị chuỗi chưa được escape thành \", xuống dòng chưa escape thành \n, hoặc thiếu dấu phẩy giữa các trường của đối tượng. Hãy sinh lại toàn bộ đoạn một lần nữa.`
+	// LLM hay kèm văn bản quanh JSON (giải thích trước/sau, fence ```json ... ```). Lỗi
+	// "invalid character '}' after top-level value" trong log là chính vụ này: JSON hợp lệ
+	// nhưng có thừa ký tự sau dấu đóng. Thử cắt về khối JSON thuần trước khi trả lỗi.
+	if extracted, ok := extractJSONBlock(content); ok {
+		if json.Unmarshal(extracted, out) == nil {
+			return nil
+		}
+	}
+	hint := `Nguyên nhân phổ biến: dấu ngoặc kép trong giá trị chuỗi chưa được escape thành \", xuống dòng chưa escape thành \n, thiếu dấu phẩy giữa các trường, hoặc có văn bản giải thích quanh khối JSON. Hãy sinh lại toàn bộ đoạn một lần nữa, chỉ xuất đúng JSON.`
 	if se, ok := err.(*json.SyntaxError); ok {
 		line, col := offsetToLineCol(content, int(se.Offset))
 		return fmt.Errorf("parse %s JSON (line %d col %d): %w — %s", typeName, line, col, err, hint)
 	}
 	return fmt.Errorf("parse %s JSON: %w — %s", typeName, err, hint)
+}
+
+// extractJSONBlock cắt lấy khối JSON thuần từ chuỗi có thể chứa văn bản quanh nó: bỏ fence
+// ```...```, tìm ký tự mở đầu tiên ([ hoặc {) và ký tự đóng cuối cùng (] hoặc }) tương ứng.
+// Trả về false nếu không thấy khối nào khả dĩ.
+func extractJSONBlock(s string) ([]byte, bool) {
+	if i := strings.Index(s, "```"); i >= 0 {
+		rest := s[i+3:]
+		if j := strings.Index(rest, "```"); j >= 0 {
+			s = rest[:j]
+		}
+	}
+	start := strings.IndexAny(s, "[{")
+	if start < 0 {
+		return nil, false
+	}
+	open := s[start]
+	var close byte
+	if open == '[' {
+		close = ']'
+	} else {
+		close = '}'
+	}
+	for i := len(s) - 1; i > start; i-- {
+		if s[i] == close {
+			return []byte(s[start : i+1]), true
+		}
+	}
+	return nil, false
 }
 
 func offsetToLineCol(s string, offset int) (int, int) {

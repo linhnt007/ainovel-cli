@@ -280,6 +280,12 @@ func (h *Host) StartPrepared(promptText string) error {
 	if err := h.store.Progress.Init("", 0); err != nil {
 		return fmt.Errorf("init progress: %w", err)
 	}
+	// Persist HumanGateEvery cho sách mới: SetHumanGateEvery trong New() bỏ qua khi
+	// progress chưa tồn tại (tránh tạo file trống làm hỏng màn hình start), nên phải
+	// ghi lại sau khi Init tạo progress thật.
+	if err := h.store.Progress.SetHumanGateEvery(h.cfg.Quality.HumanGateEvery); err != nil {
+		return fmt.Errorf("init human gate every: %w", err)
+	}
 
 	slog.Info("Bắt đầu sáng tác", "module", "host", "prompt_len", len(promptText))
 	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "Bắt đầu sáng tác", Level: "info"})

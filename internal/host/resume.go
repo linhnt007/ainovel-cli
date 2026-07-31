@@ -23,7 +23,10 @@ func buildResumePrompt(store *storepkg.Store) (string, string, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return "", "", err
 	}
-	if progress == nil || progress.Phase == domain.PhaseComplete {
+	if progress == nil || progress.Phase == "" ||
+		progress.Phase == domain.PhaseInit || progress.Phase == domain.PhaseComplete {
+		// Phase rỗng/PhaseInit = sách vừa khởi tạo chưa bắt đầu sáng tác (hoặc file trống
+		// do helper vô tình tạo), không có gì để khôi phục → chế độ tạo mới.
 		return "", "", nil
 	}
 

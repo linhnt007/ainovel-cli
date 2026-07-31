@@ -29,12 +29,12 @@ func checkRules(ctx context.Context, store *store.Store, rulesOpts rules.LoadOpt
 	bundle := rules.Merge(rules.Load(rulesOpts))
 	violations = append(violations, rules.Check(text, wordCount, bundle.Structured)...)
 
-	// Kiểm tra độ dài tối thiểu 1500 từ
-	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 1500 {
+	// Kiểm tra độ dài tối thiểu 2500 từ
+	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 2500 {
 		violations = append(violations, rules.Violation{
 			Rule:     "chapter_words_too_short",
 			Target:   "Độ dài chương",
-			Limit:    1500,
+			Limit:    2500,
 			Actual:   wordCount,
 			Severity: rules.SeverityError,
 		})

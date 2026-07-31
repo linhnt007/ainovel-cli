@@ -173,9 +173,9 @@ func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (
 		return nil, fmt.Errorf("no content found for chapter %d: %w", a.Chapter, errs.ErrToolPrecondition)
 	}
 
-	// Kiểm tra độ dài tối thiểu 1500 từ (chỉ áp dụng cho nháp thực tế >50 từ, bỏ qua mock data của unit test)
-	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 1500 {
-		return nil, fmt.Errorf("commit bị chặn do bản nháp quá ngắn: thực tế %d từ (yêu cầu tối thiểu 1500 từ). Vui lòng dùng draft_chapter(mode=\"append\", chapter=%d) để viết bổ sung nội dung trước khi commit: %w", wordCount, a.Chapter, errs.ErrToolPrecondition)
+	// Kiểm tra độ dài tối thiểu 2500 từ (chỉ áp dụng cho nháp thực tế >50 từ, bỏ qua mock data của unit test)
+	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 2500 {
+		return nil, fmt.Errorf("commit bị chặn do bản nháp quá ngắn: thực tế %d từ (yêu cầu tối thiểu 2500 từ). Vui lòng dùng draft_chapter(mode=\"append\", chapter=%d) để viết bổ sung nội dung trước khi commit: %w", wordCount, a.Chapter, errs.ErrToolPrecondition)
 	}
 
 	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa
@@ -421,8 +421,8 @@ func (t *CommitChapterTool) executeRewriteCommit(
 		return nil, fmt.Errorf("no content found for chapter %d: %w", chapter, errs.ErrToolPrecondition)
 	}
 
-	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 1500 {
-		return nil, fmt.Errorf("commit bị chặn do bản nháp quá ngắn: thực tế %d từ (yêu cầu tối thiểu 1500 từ). Vui lòng dùng draft_chapter(mode=\"append\", chapter=%d) để viết bổ sung nội dung trước khi commit: %w", wordCount, chapter, errs.ErrToolPrecondition)
+	if ctx.Value("import_mode") != true && wordCount >= 100 && wordCount < 2500 {
+		return nil, fmt.Errorf("commit bị chặn do bản nháp quá ngắn: thực tế %d từ (yêu cầu tối thiểu 2500 từ). Vui lòng dùng draft_chapter(mode=\"append\", chapter=%d) để viết bổ sung nội dung trước khi commit: %w", wordCount, chapter, errs.ErrToolPrecondition)
 	}
 
 	// Kiểm tra bắt buộc: đã chạy check_consistency trên bản nháp hiện tại chưa

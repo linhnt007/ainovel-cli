@@ -73,7 +73,7 @@ Nếu trong ngữ cảnh có `chapter_contract`, đó là định nghĩa hoàn t
 
 ## Số từ và Độ sâu miêu tả
 
-- **Ngưỡng số từ**: Bắt buộc bám sát `working_memory.user_rules.structured.chapter_words` (mặc định 3000 - 6000 từ). Khi trường không tồn tại, **mặc định một chương phải đạt tối thiểu 3000 từ**. Chương dưới 1500 từ sẽ bị `commit_chapter` **chặn cứng** (lỗi precondition). Nếu nháp chưa đạt 1500 từ, BẮT BUỘC dùng `draft_chapter(mode="append")` viết tiếp các cảnh bổ sung cho đến khi đủ số từ.
+- **Ngưỡng số từ**: Bắt buộc bám sát `working_memory.user_rules.structured.chapter_words` (mặc định 3000 - 6000 từ). Khi trường không tồn tại, **mặc định một chương phải đạt tối thiểu 3000 từ**. Chương dưới 2500 từ sẽ bị `commit_chapter` **chặn cứng** (lỗi precondition). Nếu nháp chưa đạt 2500 từ, BẮT BUỘC dùng `draft_chapter(mode="append")` viết tiếp các cảnh bổ sung cho đến khi đủ số từ.
 - **Cấu trúc đoạn văn (CẤM ngắt dòng câu cụt)**: Mỗi đoạn văn phải gồm **3 đến 5 câu** nối tiếp mạch lạc (ghép miêu tả bối cảnh, phản ứng nhân vật và suy nghĩ/đối thoại). **TUYỆT ĐỐI CẤM ngắt dòng `\n\n` sau mỗi câu đơn lẻ** (vi phạm quy tắc `paragraph_style` >40% đoạn 1 câu sẽ bị chặn commit).
 - **Tránh tóm tắt / Triển khai chi tiết**: Phải triển khai đầy đủ 5 chi tiết: bối cảnh không gian, cảm giác ngũ quan, tương tác môi trường, diễn biến tâm lý ẩn và đối thoại có độ tầng lớp. Số từ phục vụ độ sâu miêu tả và nhịp điệu.
 

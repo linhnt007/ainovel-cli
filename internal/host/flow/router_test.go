@@ -222,10 +222,10 @@ func flatProgress(completed []int) *domain.Progress {
 func TestRoute_FlatPendingReviewDispatchesEditor(t *testing.T) {
 	// Đã hoàn thành 5 chương (bội của ReviewInterval) nhưng chưa được review → ép editor (unified, batch+single).
 	s := State{
-		Progress:          flatProgress([]int{1, 2, 3, 4, 5}),
-		LastCompleted:     5,
+		Progress:           flatProgress([]int{1, 2, 3, 4, 5}),
+		LastCompleted:      5,
 		NeedsReviewChapter: 5,
-		IsReviewBatch:     true,
+		IsReviewBatch:      true,
 	}
 	got := Route(s)
 	if got == nil || got.Agent != "editor" {
@@ -245,8 +245,8 @@ func TestRoute_FlatPendingReviewDispatchesEditor(t *testing.T) {
 func TestRoute_FlatReviewDoneContinuesWriter(t *testing.T) {
 	// Đã review xong (NeedsReviewChapter=0) → tiếp tục viết chương kế.
 	s := State{
-		Progress:          flatProgress([]int{1, 2, 3, 4, 5}),
-		LastCompleted:     5,
+		Progress:           flatProgress([]int{1, 2, 3, 4, 5}),
+		LastCompleted:      5,
 		NeedsReviewChapter: 0,
 	}
 	got := Route(s)
@@ -379,6 +379,39 @@ func TestRoute_NeedsRewriteReview(t *testing.T) {
 	}
 }
 
+func TestRoute_StaleNeedsRewriteReviewFallsThrough(t *testing.T) {
+	// Stale flag: NeedsRewriteReview=2 nhưng chương 2 KHÔNG nằm trong CompletedChapters
+	// (vd sau rollback completed_chapters=null) → step 3.5 bỏ qua, fall-through xuống writer,
+	// không loop editor mãi. Route là hàm thuần túy, không clear flag ở đây.
+	p := &domain.Progress{
+		Phase:             domain.PhaseWriting,
+		Flow:              domain.FlowWriting,
+		CurrentChapter:    3,
+		CompletedChapters: nil,
+	}
+	got := Route(State{Progress: p})
+	if got == nil || got.Agent != "writer" {
+		t.Fatalf("stale rewrite review phải fall-through xuống writer, got %+v", got)
+	}
+	if contains(got.Task, "Đánh giá lại") {
+		t.Errorf("không được dispatch editor re-review, got %q", got.Task)
+	}
+	if got.Chapter != 1 {
+		t.Errorf("expected Chapter=1 (NextChapter từ CompletedChapters rỗng), got %d", got.Chapter)
+	}
+
+	// Normal case: chương 2 đã completed + flag → vẫn editor dispatch như cũ.
+	ok := writingProgress([]int{1, 2}, domain.FlowWriting)
+	ok.NeedsRewriteReview = 2
+	got = Route(State{Progress: ok})
+	if got == nil || got.Agent != "editor" {
+		t.Fatalf("flag hợp lệ (chương đã completed) phải dispatch editor, got %+v", got)
+	}
+	if got.Task != "Đánh giá lại chương 2 sau viết lại (scope=chapter)" {
+		t.Errorf("task mismatch: %q", got.Task)
+	}
+}
+
 func TestRoute_PendingRewritesBeforeNeedsReview(t *testing.T) {
 	// PendingRewrites=[3] + NeedsRewriteReview=2 → step 3 thắng (writer ch3)
 	p := writingProgress([]int{1, 2}, domain.FlowRewriting)
@@ -462,4 +495,3 @@ func TestRoute_ReviewBeforeGateAtMilestone(t *testing.T) {
 		t.Fatalf("tại mốc gate chưa review, router phải ưu tiên editor review, got %+v", got)
 	}
 }
-

@@ -29,8 +29,8 @@ type Store struct {
 	Sessions    *SessionStore
 	Usage       *UsageStore
 	Simulation  *SimulationStore
-	Checks      *CheckStore     // Light Gate: kết quả kiểm tra chất lượng chương
-	Notebooks   *NotebookStore  // Notebook: ghi chú của writer
+	Checks      *CheckStore    // Light Gate: kết quả kiểm tra chất lượng chương
+	Notebooks   *NotebookStore // Notebook: ghi chú của writer
 
 	crossMu sync.Mutex // bảo vệ các thao tác nguyên tử liên miền
 }
@@ -361,6 +361,7 @@ func (s *Store) RollbackToChapter(target int) error {
 		p.CompletedScenes = nil
 		p.PendingRewrites = nil
 		p.RewriteReason = ""
+		p.NeedsRewriteReview = 0
 		p.ReopenedFromComplete = false
 		p.Flow = domain.FlowWriting
 		p.Phase = domain.PhaseWriting
@@ -369,6 +370,16 @@ func (s *Store) RollbackToChapter(target int) error {
 		if target == 0 {
 			p.CurrentVolume = 1
 			p.CurrentArc = 1
+			// Đồng bộ với đề cương phân tầng thực tế: volume/arc đầu tiên có thể
+			// không phải 1 nếu dữ liệu lưu index lệch (vd LLM trả index=0, hoặc bản
+			// sửa tay). Hardcode 1/1 trước đây làm progress lệch outline sau mỗi reset
+			// → "Vn Am không tìm thấy" + expand_arc "arc not found" kẹt vĩnh viễn.
+			if p.Layered {
+				if vols, verr := s.Outline.LoadLayeredOutline(); verr == nil && len(vols) > 0 && len(vols[0].Arcs) > 0 {
+					p.CurrentVolume = vols[0].Index
+					p.CurrentArc = vols[0].Arcs[0].Index
+				}
+			}
 			p.StrandHistory = nil
 			p.HookHistory = nil
 		} else {
