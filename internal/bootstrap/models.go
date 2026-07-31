@@ -137,15 +137,14 @@ func (ms *ModelSet) ForRoleWithFailover(role string, report FailoverReporter) ag
 	if len(targets) == 0 {
 		return ms.wrapLogger(role, &singleTargetModel{primary})
 	}
-	pProvider, pName := primary.Current()
+	_, pName := primary.Current()
 	var cleanTargets []modelTarget
-	seen := map[string]bool{pProvider + "/" + pName: true}
+	seen := map[string]bool{pName: true}
 	for _, t := range targets {
-		k := t.provider + "/" + t.name
-		if seen[k] {
+		if seen[t.name] {
 			continue
 		}
-		seen[k] = true
+		seen[t.name] = true
 		cleanTargets = append(cleanTargets, t)
 	}
 	if len(cleanTargets) == 0 {
@@ -636,6 +635,9 @@ func (m *failoverModel) pickFallback(current modelTarget, err error) (modelTarge
 	reason := agentcore.FailoverReason(err)
 	for _, target := range m.fallbacks {
 		if target.provider == current.provider && target.name == current.name {
+			continue
+		}
+		if target.name == current.name {
 			continue
 		}
 		if target.model == nil {
