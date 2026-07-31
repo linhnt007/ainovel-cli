@@ -99,7 +99,12 @@ func TestQualityControlGate_BlocksHumanGatePending(t *testing.T) {
 	st := newTestStore(t)
 	p, _ := st.Progress.Load()
 	p.CompletedChapters = []int{1}
+	p.HumanGateEvery = 1
 	_ = st.Progress.Save(p)
+	// Gate chỉ arm sau khi review xong → phải lưu review chương 1 trước.
+	if err := st.World.SaveReview(domain.ReviewEntry{Chapter: 1, Scope: "chapter", Verdict: "accept"}); err != nil {
+		t.Fatalf("save review ch1: %v", err)
+	}
 
 	cfg := bootstrap.Config{}
 	cfg.Quality.HumanGateEvery = 1
@@ -111,6 +116,61 @@ func TestQualityControlGate_BlocksHumanGatePending(t *testing.T) {
 	}
 	if decision == nil || decision.Allowed {
 		t.Fatal("expected qualityControlGate to block subagent call when HumanGatePending=true")
+	}
+}
+
+// TestQualityControlGate_GateWaitsForEditorReviewAtMilestone: regression bug deadlock.
+// Mốc gate chưa review → editor review ĐƯỢC phép (gate chưa arm); sau khi review → gate
+// arm chặn mọi subagent; sau khi user ack → hết chặn.
+func TestQualityControlGate_GateWaitsForEditorReviewAtMilestone(t *testing.T) {
+	st := newTestStore(t)
+	p, _ := st.Progress.Load()
+	p.CompletedChapters = []int{1, 2, 3, 4, 5, 6, 7, 8}
+	p.HumanGateEvery = 2
+	_ = st.Progress.Save(p)
+
+	gate := qualityControlGate(st, bootstrap.Config{})
+
+	// (i) Mốc gate chương 8 CHƯA review → gate chưa arm, editor review được phép.
+	decEditor, err := gate(context.Background(), subagentCall(`{"agent":"editor","task":"Đánh giá chương 8 (scope=chapter)"}`))
+	if err != nil {
+		t.Fatalf("editor unreviewed milestone: unexpected error: %v", err)
+	}
+	if decEditor != nil && !decEditor.Allowed {
+		t.Fatalf("(i) mốc gate chưa review → editor review phải được phép, got block %q", decEditor.Reason)
+	}
+
+	// writer vẫn bị chặn vì còn nợ review (NeedsReviewChapter>0).
+	decWriter, err := gate(context.Background(), subagentCall(`{"agent":"writer","task":"Viết chương 9"}`))
+	if err != nil {
+		t.Fatalf("writer unreviewed milestone: unexpected error: %v", err)
+	}
+	if decWriter == nil || decWriter.Allowed {
+		t.Fatal("(i) chưa review → writer vẫn phải bị chặn (NeedsReviewChapter>0)")
+	}
+
+	// (ii) Đã review, chưa ack → gate arm, MỌI subagent bị chặn (kể cả editor).
+	if err := st.World.SaveReview(domain.ReviewEntry{Chapter: 8, Scope: "chapter", Verdict: "accept"}); err != nil {
+		t.Fatalf("save review ch8: %v", err)
+	}
+	decEditor2, err := gate(context.Background(), subagentCall(`{"agent":"editor","task":"Đánh giá chương 8 (scope=chapter)"}`))
+	if err != nil {
+		t.Fatalf("editor reviewed milestone: unexpected error: %v", err)
+	}
+	if decEditor2 == nil || decEditor2.Allowed {
+		t.Fatal("(ii) đã review chưa ack → editor cũng phải bị chặn (gate pending)")
+	}
+
+	// (iii) User đã ack → gate hết pending, subagent lại được phép.
+	if err := st.World.SaveHumanGateAck(8, "ok"); err != nil {
+		t.Fatalf("save ack ch8: %v", err)
+	}
+	decEditor3, err := gate(context.Background(), subagentCall(`{"agent":"editor","task":"Đánh giá chương 8 (scope=chapter)"}`))
+	if err != nil {
+		t.Fatalf("editor acked milestone: unexpected error: %v", err)
+	}
+	if decEditor3 != nil && !decEditor3.Allowed {
+		t.Fatalf("(iii) đã ack → editor được phép, got block %q", decEditor3.Reason)
 	}
 }
 
@@ -131,7 +191,7 @@ func TestQualityControlGate_BlocksWriterOnPendingReview(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if decWriter == nil || decWriter.Allowed {
-		t.Fatal("expected qualityControlGate to block writer when HasPendingFlatReview=true")
+		t.Fatal("expected qualityControlGate to block writer when NeedsReviewChapter>0")
 	}
 
 	// Editor call cho phép
@@ -140,6 +200,6 @@ func TestQualityControlGate_BlocksWriterOnPendingReview(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if decEditor != nil && !decEditor.Allowed {
-		t.Fatal("expected qualityControlGate to ALLOW editor when HasPendingFlatReview=true")
+		t.Fatal("expected qualityControlGate to ALLOW editor when NeedsReviewChapter>0")
 	}
 }

@@ -386,18 +386,7 @@ func qualityControlGate(st *store.Store, cfg bootstrap.Config) agentcore.ToolGat
 			}, nil
 		}
 
-		qualityReviewInterval := cfg.Quality.ReviewInterval
-		state := flow.LoadState(st, qualityReviewInterval)
-		// Fix 3D: đọc HumanGateEvery từ store (đồng bộ với dispatcher), fallback về config nếu store chưa có.
-		if storedEvery := st.Progress.HumanGateEvery(); storedEvery > 0 {
-			state.HumanGateEvery = storedEvery
-		} else {
-			state.HumanGateEvery = cfg.Quality.HumanGateEvery
-		}
-		state.QualityReviewInterval = cfg.Quality.ReviewInterval
-		if state.LastCompleted > 0 && state.HumanGateEvery > 0 && state.LastCompleted%state.HumanGateEvery == 0 && !st.World.HasHumanGateAck(state.LastCompleted) {
-			state.HumanGatePending = true
-		}
+		state := flow.LoadState(st, cfg.Quality.ReviewInterval, cfg.Quality.HumanGateEvery)
 
 		// Fix 1C: Chặn bằng frozen marker (persistent, không phụ thuộc config snapshot).
 		if st.Progress.IsHumanGateFrozen(0) {
@@ -416,8 +405,8 @@ func qualityControlGate(st *store.Store, cfg bootstrap.Config) agentcore.ToolGat
 			}, nil
 		}
 
-		// 3. Chặn writer khi còn nợ review định kỳ
-		if state.HasPendingFlatReview && a.Agent == "writer" {
+		// 3. Chặn writer khi còn nợ review
+		if state.NeedsReviewChapter > 0 && a.Agent == "writer" {
 			reviewInterval := domain.GetReviewInterval(state.QualityReviewInterval)
 			to := (state.LastCompleted / reviewInterval) * reviewInterval
 			from := to - reviewInterval + 1
