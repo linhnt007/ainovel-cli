@@ -41,10 +41,12 @@ type State struct {
 	HasArcSummary    bool
 	HasVolumeSummary bool
 
-	// HasPendingFlatReview: chế độ flat (không phân tầng) còn nợ review định kỳ hay không —
-	// tính từ đĩa (batch chương gần nhất là bội của ReviewInterval nhưng chưa có file review global phủ lên).
-	// Chỉ có ý nghĩa khi !Progress.Layered.
-	HasPendingFlatReview bool
+	// NeedsReviewChapter: chương vừa hoàn thành chưa được editor review.
+	// 0 = không cần review (đã có review hoặc chưa có chương hoàn thành).
+	NeedsReviewChapter int
+
+	// IsReviewBatch: true khi chương là bội của ReviewInterval — editor sẽ làm batch review + single trong 1 lần.
+	IsReviewBatch bool
 
 	// Các mục thiếu trong cài đặt nền tảng (tín hiệu bổ sung trong giai đoạn lập kế hoạch).
 	FoundationMissing []string
@@ -76,8 +78,8 @@ type State struct {
 //  7. Cuối tập có tóm tắt cung nhưng thiếu tóm tắt tập → editor(volume summary)
 //  8. Cung truyện tiếp theo là skeleton           → architect_long(expand_arc)
 //  9. Cuối tập cần quyết định tập tiếp theo       → architect_long(append_volume / complete_book)
-// 10. Flat mode còn nợ review định kỳ           → editor(batch review)
-// 10.5. Human Gate Pending      → dừng chờ duyệt (/gate) (sau editor để editor review trước)
+// 10. Unified review: chương vừa hoàn thành chưa review → editor (single hoặc batch+single nếu mốc ReviewInterval)
+// 10.5. Human Gate Pending      → dừng chờ duyệt (/gate) (sau editor để user thấy review trước)
 // 11. Các trường hợp còn lại                  → writer(viết next_chapter)
 func Route(s State) *Instruction {
 	inst := routeInner(s)
@@ -180,19 +182,29 @@ func routeInner(s State) *Instruction {
 		}
 	}
 
-	// 10. Cưỡng chế review định kỳ mỗi ReviewInterval chương (áp dụng cho cả Flat và Layered).
-	if s.HasPendingFlatReview {
-		reviewInterval := domain.GetReviewInterval(s.QualityReviewInterval)
-		to := (s.LastCompleted / reviewInterval) * reviewInterval
-		from := to - reviewInterval + 1
+	// 10. Unified review: chương vừa hoàn thành chưa có editor review.
+	// Khi đúng mốc batch (ReviewInterval), editor làm cả batch + single trong 1 lần gọi.
+	// Khi không phải mốc batch, editor chỉ review single chapter.
+	if s.NeedsReviewChapter > 0 {
+		if s.IsReviewBatch {
+			reviewInterval := domain.GetReviewInterval(s.QualityReviewInterval)
+			to := (s.LastCompleted / reviewInterval) * reviewInterval
+			from := to - reviewInterval + 1
+			return &Instruction{
+				Agent:  "editor",
+				Task:   fmt.Sprintf("Đánh giá batch chương %d-%d + chapter %d (scope=both)", from, to, s.NeedsReviewChapter),
+				Reason: fmt.Sprintf("Review định kỳ batch %d-%d + chapter mới %d", from, to, s.NeedsReviewChapter),
+			}
+		}
 		return &Instruction{
 			Agent:  "editor",
-			Task:   fmt.Sprintf("Đánh giá batch chương %d-%d (scope=global)", from, to),
-			Reason: "Review định kỳ chưa hoàn thành",
+			Task:   fmt.Sprintf("Đánh giá chương %d (scope=chapter)", s.NeedsReviewChapter),
+			Reason: fmt.Sprintf("Chương %d đã hoàn thành nhưng chưa được editor đánh giá", s.NeedsReviewChapter),
 		}
 	}
 
-	// 10.5. Human Gate: dừng chờ người dùng duyệt qua TUI (sau editor để editor có cơ hội review trước)
+	// 10.5. Human Gate: dừng chờ người dùng duyệt (SAU KHI editor đã review xong).
+	// User thấy kết quả review trước khi quyết định duyệt hay không.
 	if s.HumanGatePending {
 		return &Instruction{
 			Agent:  "",
