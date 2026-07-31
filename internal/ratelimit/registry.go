@@ -120,6 +120,12 @@ type Handle struct {
 	sem chan struct{}
 }
 
+// Peek báo retryAfter hiện tại (0 = sẵn), KHÔNG chiếm slot, KHÔNG ghi file. Chỉ đọc.
+// Exported version của peek cho các package khác kiểm tra cooldown.
+func (l *Limiter) Peek(estTokens int) time.Duration {
+	return l.peek(estTokens)
+}
+
 // peek báo retryAfter hiện tại (0 = sẵn), KHÔNG chiếm slot, KHÔNG ghi file. Chỉ đọc.
 // Dùng để tính thời gian chờ trong Acquire + so sánh giữa các target lúc rotation.
 func (l *Limiter) peek(estTokens int) time.Duration {

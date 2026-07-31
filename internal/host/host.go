@@ -24,6 +24,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/host/sim"
 	modelreg "github.com/voocel/ainovel-cli/internal/models"
 	"github.com/voocel/ainovel-cli/internal/notify"
+	"github.com/voocel/ainovel-cli/internal/ratelimit"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
 	"github.com/voocel/ainovel-cli/internal/tools"
@@ -210,11 +211,8 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 	// Circuit breaker mềm: khi lặp >= ngưỡng, inject strong instruction buộc Coordinator chuyển hướng.
 	// Không abort — chỉ gửi tin nhắn mạnh để LLM tự phán quyết (giữ triết lý "quyền phán quyết thuộc LLM").
 	h.router.SetOnSoftStop(func(agent, task string, n int) {
-		body := fmt.Sprintf("Circuit breaker: lệnh %s/%s đã lặp %d lần (ngưỡng %d). Buộc chuyển sang agent khác hoặc dừng.", agent, task, n, cfg.Quality.MaxDispatchRepeats)
-		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: body, Level: "error", Kind: "soft_stop"})
-		h.notifier.Send(notify.Notification{Kind: "repeat", Level: "error", Title: "ainovel: Circuit breaker", Body: body})
-		// Inject strong instruction vào Coordinator — không abort, cho LLM cơ hội tự sửa.
-		h.coordinator.FollowUp(agentcore.UserMsg(fmt.Sprintf("[Host - CIRCUIT BREAKER] Lệnh %s/%s đã lặp %d lần. BẮT BUỘC: chuyển sang agent phụ KHÁC hoặc gọi ask_user để dừng. Không được tiếp tục lệnh này.", agent, task, n)))
+		summary := fmt.Sprintf("Circuit breaker: lệnh %s/%s lặp %d lần — dừng để tránh tốn token", agent, task, n)
+		h.abortWithEvent(summary, "warn")
 	})
 	// Steering timeout: khi Flow=Steering vượt quá số lần cho phép, auto-exit về FlowWriting.
 	h.router.SetOnSteeringTimeout(func(steerCount int) {
@@ -225,6 +223,20 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 		if err := h.store.ClearHandledSteer(); err != nil {
 			slog.Error("steering timeout: clear handled steer failed", "module", "host", "err", err)
 		}
+	})
+	// Task 6: Cooldown checker - skip dispatch khi model đang rate-limit
+	h.router.SetCooldownChecker(func(agent string) (bool, string) {
+		provider, model, _ := h.models.CurrentSelection(agent)
+		if provider == "" || model == "" {
+			return false, ""
+		}
+		limiter := ratelimit.Global.For(provider, model)
+		if limiter == nil {
+			return false, model
+		}
+		// peek(0) trả về retryAfter > 0 nếu đang cooldown
+		retryAfter := limiter.Peek(0)
+		return retryAfter > 0, model
 	})
 	h.routerDetach = h.router.Attach()
 
@@ -494,7 +506,14 @@ func (h *Host) waitDone() {
 		}
 		h.mu.Unlock()
 		if wasRunning {
-			summary := fmt.Sprintf("Coordinator dừng (đã hoàn thành %d chương)", completed)
+			// Kiểm tra frozen marker: nếu dừng do human gate, thông báo "đang chờ duyệt" thay vì "dừng".
+			frozenCh := h.store.Progress.HumanGateFrozenChapter()
+			var summary string
+			if frozenCh > 0 {
+				summary = fmt.Sprintf("Đang chờ duyệt chương %d (đã hoàn thành %d chương)", frozenCh, completed)
+			} else {
+				summary = fmt.Sprintf("Coordinator dừng (đã hoàn thành %d chương)", completed)
+			}
 			slog.Warn(summary, "module", "host")
 			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: "warn"})
 			h.notifier.Send(notify.Notification{
@@ -1223,6 +1242,7 @@ func (h *Host) ResetAll() error {
 // Tạm dừng coordinator, xóa dữ liệu chương > target, đặt lại trạng thái lifecycle.
 func (h *Host) ResetToChapter(target int) error {
 	h.Abort()
+	h.coordinator.ClearMessages() // clear history cũ để /resume bắt đầu lại từ chapter 1
 
 	if err := h.store.RollbackToChapter(target); err != nil {
 		return fmt.Errorf("quay lui dữ liệu: %w", err)

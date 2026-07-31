@@ -434,6 +434,9 @@ func (c *Config) FillDefaults() {
 		defaultRPM = 10
 		defaultTPM = 250000
 	)
+	if c.Quality.MaxDispatchRepeats <= 0 {
+		c.Quality.MaxDispatchRepeats = 3
+	}
 	for k, pc := range c.Providers {
 		if pc.RateLimit == nil {
 			pc.RateLimit = &RateLimitConfig{RPM: defaultRPM, TPM: defaultTPM}
