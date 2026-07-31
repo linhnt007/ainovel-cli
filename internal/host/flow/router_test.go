@@ -220,20 +220,21 @@ func flatProgress(completed []int) *domain.Progress {
 }
 
 func TestRoute_FlatPendingReviewDispatchesEditor(t *testing.T) {
-	// Đã hoàn thành 5 chương (bội của ReviewInterval) nhưng batch chưa được review → ép editor.
+	// Đã hoàn thành 5 chương (bội của ReviewInterval) nhưng chưa được review → ép editor (unified, batch+single).
 	s := State{
-		Progress:             flatProgress([]int{1, 2, 3, 4, 5}),
-		LastCompleted:        5,
-		HasPendingFlatReview: true,
+		Progress:          flatProgress([]int{1, 2, 3, 4, 5}),
+		LastCompleted:     5,
+		NeedsReviewChapter: 5,
+		IsReviewBatch:     true,
 	}
 	got := Route(s)
 	if got == nil || got.Agent != "editor" {
-		t.Fatalf("expected editor for pending flat review, got %+v", got)
+		t.Fatalf("expected editor for pending review, got %+v", got)
 	}
-	if got.Task != "Đánh giá batch chương 1-5 (scope=global)" {
+	if got.Task != "Đánh giá batch chương 1-5 + chapter 5 (scope=both)" {
 		t.Errorf("task mismatch: %q", got.Task)
 	}
-	if got.Reason != "Review định kỳ chưa hoàn thành" {
+	if got.Reason != "Review định kỳ batch 1-5 + chapter mới 5" {
 		t.Errorf("reason mismatch: %q", got.Reason)
 	}
 	if got.Chapter != 0 {
@@ -242,11 +243,11 @@ func TestRoute_FlatPendingReviewDispatchesEditor(t *testing.T) {
 }
 
 func TestRoute_FlatReviewDoneContinuesWriter(t *testing.T) {
-	// Batch đã review xong (HasPendingFlatReview=false) → tiếp tục viết chương kế.
+	// Đã review xong (NeedsReviewChapter=0) → tiếp tục viết chương kế.
 	s := State{
-		Progress:             flatProgress([]int{1, 2, 3, 4, 5}),
-		LastCompleted:        5,
-		HasPendingFlatReview: false,
+		Progress:          flatProgress([]int{1, 2, 3, 4, 5}),
+		LastCompleted:     5,
+		NeedsReviewChapter: 0,
 	}
 	got := Route(s)
 	if got == nil || got.Agent != "writer" {
@@ -437,5 +438,28 @@ func TestRoute_LoadWarningsFallback(t *testing.T) {
 			t.Fatalf("expected writer for next chapter (2), got %+v", got)
 		}
 	})
+}
+
+// TestRoute_ReviewBeforeGateAtMilestone: bất biến — step 10 (editor review) đứng TRƯỚC
+// step 10.5 (human gate). Tại mốc gate mà chương chưa review, router ưu tiên editor review,
+// không dừng chờ gate. (Tình huống "cả hai pending" không thể sinh từ LoadState mới, nhưng
+// Route phải giữ thứ tự này để không tái phát deadlock gate chặn editor.)
+func TestRoute_ReviewBeforeGateAtMilestone(t *testing.T) {
+	p := &domain.Progress{
+		Phase:             domain.PhaseWriting,
+		Flow:              domain.FlowWriting,
+		TotalChapters:     40,
+		CompletedChapters: []int{1, 2, 3, 4, 5, 6, 7, 8},
+	}
+	s := State{
+		Progress:           p,
+		LastCompleted:      8,
+		NeedsReviewChapter: 8,
+		HumanGatePending:   true,
+	}
+	got := Route(s)
+	if got == nil || got.Agent != "editor" {
+		t.Fatalf("tại mốc gate chưa review, router phải ưu tiên editor review, got %+v", got)
+	}
 }
 
