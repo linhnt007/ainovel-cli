@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -59,6 +60,10 @@ type Dispatcher struct {
 	// onDegraded là callback khi dòng chảy nạp trạng thái bị suy giảm (có cảnh báo/lỗi IO)
 	onDegraded func(warnings []string)
 
+	// cooldownChecker kiểm tra xem model của agent có đang cooldown (rate-limit 429) không.
+	// Trả về (inCooldown, model). nil = không kiểm tra (bỏ qua).
+	cooldownChecker func(agent string) (inCooldown bool, model string)
+
 	// steeringCount đếm số lần dispatch liên tiếp khi Flow=Steering.
 	steeringCount int
 
@@ -103,6 +108,11 @@ func (d *Dispatcher) SetOnSteeringTimeout(cb func(steerCount int)) {
 	d.onSteeringTimeout = cb
 }
 
+// SetCooldownChecker đăng ký callback kiểm tra cooldown rate-limit của model theo agent.
+func (d *Dispatcher) SetCooldownChecker(cb func(agent string) (inCooldown bool, model string)) {
+	d.cooldownChecker = cb
+}
+
 // Enable bật phát lệnh theo tuyến đường; khi tắt, EventToolExecEnd đến sẽ không gửi FollowUp.
 // Host bật sau khi hoàn thành prompt đầu tiên trong Start/Resume, tránh xung đột với luồng khởi động.
 func (d *Dispatcher) Enable() { d.enabled.Store(true) }
@@ -139,19 +149,9 @@ func (d *Dispatcher) handle(ev agentcore.Event) {
 
 // Dispatch tính toán tuyến đường ngay lập tức và gửi lệnh; Host có thể chủ động gọi vào thời điểm đặc biệt (ví dụ sau Resume).
 func (d *Dispatcher) Dispatch() {
-	state := LoadState(d.store, d.QualityReviewInterval)
+	state := LoadState(d.store, d.QualityReviewInterval, d.HumanGateEvery)
 	if len(state.LoadWarnings) > 0 && d.onDegraded != nil {
 		d.onDegraded(state.LoadWarnings)
-	}
-	// Fix 3E: đọc HumanGateEvery từ store (đồng bộ với gate), fallback về field.
-	if storedEvery := d.store.Progress.HumanGateEvery(); storedEvery > 0 {
-		state.HumanGateEvery = storedEvery
-	} else {
-		state.HumanGateEvery = d.HumanGateEvery
-	}
-	state.QualityReviewInterval = d.QualityReviewInterval
-	if state.LastCompleted > 0 && state.HumanGateEvery > 0 && state.LastCompleted%state.HumanGateEvery == 0 && !d.store.World.HasHumanGateAck(state.LastCompleted) {
-		state.HumanGatePending = true
 	}
 
 	// Fix 2D: auto-clear gateActive nếu gate đã ack.
@@ -202,13 +202,26 @@ func (d *Dispatcher) Dispatch() {
 		if d.onHumanGate != nil {
 			d.onHumanGate(state.LastCompleted)
 		}
-		// Chỉ gửi FollowUp 1 lần duy nhất cho mỗi mốc gate, tránh vòng lặp
-		// coordinator nhận message → LLM tốn token → gate chặn → dispatch lại → FollowUp nữa → ∞.
+		// AbortSilent: dừng coordinator ngay không qua LLM.
+		// User đã thấy notification qua onHumanGate callback, không cần tốn RQ.
+		// lastGateChapter guard vẫn tồn tại để tránh gọi lặp AbortSilent.
 		if d.lastGateChapter != state.LastCompleted {
-			d.coordinator.FollowUp(agentcore.UserMsg(fmt.Sprintf("[Host] Mốc duyệt người dùng: dừng tiến trình sáng tác tự động để chờ người dùng kiểm tra và duyệt chương %d.", state.LastCompleted)))
 			d.lastGateChapter = state.LastCompleted
+			d.coordinator.AbortSilent()
 		}
 		return
+	}
+
+	// Task 6: Kiểm tra cooldown trước khi dispatch
+	if d.cooldownChecker != nil && inst.Agent != "" {
+		if inCooldown, model := d.cooldownChecker(inst.Agent); inCooldown {
+			slog.Warn("flow router: model đang cooldown, báo coordinator chờ", "module", "host.flow", "agent", inst.Agent, "model", model)
+			// Báo coordinator end_turn để tránh loop: nếu im lặng return, coordinator
+			// end_turn → stop_guard chặn → novel_context → dispatch lại → cooldown lại → loop.
+			d.coordinator.FollowUp(agentcore.UserMsg(
+				fmt.Sprintf("[Host] Model %s đang bị rate-limit, hãy end_turn để chờ hồi phục.", model)))
+			return
+		}
 	}
 
 	n := d.trackRepeat(inst)
@@ -226,6 +239,9 @@ func (d *Dispatcher) Dispatch() {
 	msg := formatDispatchMessage(inst, n)
 	slog.Debug("flow router dispatch", "module", "host.flow", "agent", inst.Agent, "reason", inst.Reason, "repeat", n)
 	d.coordinator.FollowUp(agentcore.UserMsg(msg))
+	// Khởi động lại Coordinator nếu đang idle (vd: sau human gate ack).
+	// Continue no-op nếu Coordinator đang chạy (ErrAlreadyRunning) → an toàn.
+	_ = d.coordinator.Continue(context.Background())
 }
 
 // formatDispatchMessage tạo nội dung lệnh gửi đến Coordinator.
