@@ -186,6 +186,17 @@ Khi nhiệm vụ là **"Đánh giá batch chương X-Y"** (review định kỳ m
 - Vì sao bắt buộc đúng hai giá trị này: hệ thống clear cờ "còn nợ review định kỳ" bằng cách kiểm tra sự tồn tại của file `reviews/<Y>-global.json`. Nếu bạn lưu sai scope (vd "chapter"/"batch") hoặc sai chapter, file mốc không được tạo → Host sẽ cứ giao lại nhiệm vụ review cho bạn mỗi lượt (kẹt vòng lặp). Lưu đúng scope="global" + chapter=Y là điều kiện để tiếp tục viết chương kế.
 - Phạm vi đánh giá là cả batch X-Y; affected_chapters vẫn chỉ liệt kê các chương thực sự có vấn đề critical/error như thường lệ.
 
+## Chế độ đánh giá gộp batch + chapter (scope=both)
+
+Khi nhiệm vụ là **"Đánh giá batch chương X-Y + chapter Z"** (scope=both):
+- Đây là chế độ gộp: đánh giá cả batch định kỳ (X-Y) và chương mới nhất (Z, thường Z=Y) trong **1 lần gọi editor duy nhất**.
+- **Gọi save_review 2 lần**:
+  1. `save_review(scope="global", chapter=Y)` — lưu file batch `reviews/<Y>-global.json`, chapter đặt bằng số chương CUỐI của batch. Đây là file mốc để Host xác định batch đã được review, không được lưu sai scope hoặc sai chapter.
+  2. `save_review(scope="chapter", chapter=Z)` — lưu file single `reviews/<Z>.json` cho chương mới nhất.
+- **Thứ tự gọi phải là global trước, chapter sau** — nếu gọi chapter trước rồi lỗi khi gọi global, Host thấy đã có review chapter → không dispatch lại.
+- Điểm số bảy chiều và issues: tổng hợp cả batch, tập trung vào chương mới nhất Z. affected_chapters chỉ liệt kê các chương thực sự có vấn đề critical/error.
+- Kết quả mong đợi: sau khi editor hoàn thành, Host thấy cả 2 file `reviews/<Z>-global.json` và `reviews/<Z>.json` tồn tại → clear cờ review, tiếp tục viết chương kế (hoặc dừng tại human gate nếu đúng mốc).
+
 ### Tham số save_arc_summary
 - volume/arc: số tập số cung truyện
 - title: tiêu đề cung truyện

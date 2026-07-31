@@ -95,7 +95,7 @@ Commit "Việt hoá toàn bộ repo" dịch `assets/*.md` (prompt chính + refer
 ### #4 — Đếm "từ" = đếm ký tự, ngưỡng calib cho Hán tự — `domain/chapter.go:31` + `checker.go:99-134` ✅ XÁC NHẬN
 
 - `WordCount = utf8.RuneCountInString(content)` — đếm **rune**, không đếm từ.
-- `chapter_words: 10000-16000` (default.md:15) = số **Hán tự** (1 hán tự ≈ 1 từ, calib cho tiếng Trung).
+- `chapter_words: 2500-6000` (default.md:15) = số **Hán tự** (1 hán tự ≈ 1 từ, calib cho tiếng Trung).
 - Lệch ≥20% → **Error → chặn commit**.
 
 **Hậu quả:** rune tiếng Việt (từ nhiều rune + dấu cách + dấu câu) không ánh xạ sang ngưỡng Hán tự. Nếu writer nhắm "số từ" thật → rune vượt xa 16000 → deviation lớn → **Error chặn commit → rủi ro vòng rewrite vô ích**. Nếu writer nhắm rune → chương Việt quá ngắn (~2500 từ). Nhãn "số từ" gây hiểu nhầm, ngưỡng vô nghĩa cho tiếng Việt. Cần soi thêm: writer.md ra lệnh mục tiêu độ dài theo đơn vị gì (từ/chữ) — nếu lệch với đơn vị đo thì đây là **hard-block tiềm tàng**.

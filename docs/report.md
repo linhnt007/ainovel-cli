@@ -20,7 +20,7 @@ nhưng **bỏ sót logic runtime trong mã Go**. Bốn ổ nằm đúng đườn
 **Ba đính chính lớn so với giả định ban đầu:**
 1. Model mặc định là `openrouter/google/gemini-2.5-flash`, **không phải** mistral/llamacpp local → model không phải nguyên nhân gốc.
 2. **Không có** hàm `checkAndBlockRules` chặn cứng commit ở tầng code; việc "chặn" nằm ở prompt `editor.md`.
-3. Ngưỡng `chapter_words: 10000-16000` là **edit local chưa commit** (sai hướng); gốc dự án = `3000-6000`.
+3. Ngưỡng `chapter_words: 2500-6000` là **edit local chưa commit** (sai hướng); gốc dự án = `3000-6000`.
 
 ---
 
@@ -103,7 +103,7 @@ Coordinator (coordinator.md, MaxTurns=100_000, gate=completePhaseGate)
     `forbidden_chars`/`forbidden_phrases` vẫn Error.
   - `default.md`: `chapter_words: 3000-6000` (từ thật), khớp `rules.md.example` + `loader.go` gốc dự án.
   - `editor.md`: bỏ nhánh "severity=error → rewrite" cho chapter_words.
-- **Đính chính:** không có hard-block ở code; `10000-16000` là edit local sai hướng, đã đưa về 3000-6000.
+- **Đính chính:** không có hard-block ở code; `2500-6000` là edit local sai hướng, đã đưa về 3000-6000.
 
 ### #5 — Rò rỉ chữ Hán nhỏ (nhiễu tool schema / file xuất)
 
