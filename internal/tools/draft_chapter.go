@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/voocel/agentcore/schema"
@@ -66,6 +67,15 @@ func (t *DraftChapterTool) Execute(_ context.Context, args json.RawMessage) (jso
 	}
 	if a.Content == "" {
 		return nil, fmt.Errorf("content must not be empty: %w", errs.ErrToolArgs)
+	}
+	// Auto-redirect: nếu hàng đợi rewrite/polish có chương khác, chuyển sang chương đầu queue
+	if prog, perr := t.store.Progress.Load(); perr == nil && prog != nil {
+		if (prog.Flow == domain.FlowRewriting || prog.Flow == domain.FlowPolishing) && len(prog.PendingRewrites) > 0 {
+			if prog.PendingRewrites[0] != a.Chapter {
+				slog.Info("draft_chapter: chuyển hướng từ chương sang chương đầu queue", "module", "tool", "from", a.Chapter, "to", prog.PendingRewrites[0])
+				a.Chapter = prog.PendingRewrites[0]
+			}
+		}
 	}
 	if err := t.store.Progress.ValidateChapterWork(a.Chapter); err != nil {
 		return nil, err

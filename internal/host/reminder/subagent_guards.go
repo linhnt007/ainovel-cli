@@ -10,8 +10,14 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
-// subagentMaxConsecutiveBlocks sau N lần chặn liên tiếp sẽ nâng cấp thành terminate, tránh vòng lặp vô tận với mô hình yếu.
+// subagentMaxConsecutiveBlocks sau N lần chặn liên tiếp sẽ nâng cấp thành escalate, tránh vòng lặp vô tận với mô hình yếu.
 const subagentMaxConsecutiveBlocks = 5
+
+// subagentHighTurnThreshold: nếu TurnIndex >= ngưỡng này mà chưa tạo checkpoint,
+// escalate luôn — proxy cho "sắp hết context", tránh inject message tốn thêm RQ vô ích.
+// Mỗi model có context window khác nhau, nhưng TurnIndex ~15 với MaxTokens thông thường
+// (~4K output/turn) đã tiêu tốn ~60K token, gần sát giới hạn context của model nhỏ.
+const subagentHighTurnThreshold = 15
 
 // hardStopReasons là các lý do từ chối từ phía provider không thể khôi phục bằng tin nhắn thúc giục. Việc inject
 // "phải commit" vào các lý do này là vô hiệu, ngược lại mỗi lần lại phát sinh một lần gọi LLM đầy đủ tiêu thụ token,
@@ -62,7 +68,14 @@ func newCheckpointDeltaGuard(st *store.Store, agentName string, requiredSteps []
 		}
 		n := consecutive.Add(1)
 		if n > subagentMaxConsecutiveBlocks {
-			slog.Error("subagent stop_guard chặn liên tiếp vượt giới hạn, nâng cấp thành terminate",
+			slog.Error("subagent stop_guard chặn liên tiếp vượt giới hạn, nâng cấp thành escalate",
+				"module", "host.reminder", "agent", agentName, "turn", info.TurnIndex, "consecutive", n)
+			return agentcore.StopDecision{Allow: false, Escalate: true}
+		}
+		// Nếu đã chạy nhiều turn mà chưa tạo checkpoint → có thể sắp hết context.
+		// Escalate lên coordinator thay vì inject message (tốn thêm 1-3 subagent RQ vô ích).
+		if info.TurnIndex >= subagentHighTurnThreshold {
+			slog.Warn("subagent stop_guard: nhiều turn chưa tạo checkpoint, escalate để tiết kiệm context",
 				"module", "host.reminder", "agent", agentName, "turn", info.TurnIndex, "consecutive", n)
 			return agentcore.StopDecision{Allow: false, Escalate: true}
 		}

@@ -97,9 +97,18 @@ func (t *ReadChapterTool) Execute(_ context.Context, args json.RawMessage) (json
 	}
 
 	// Chế độ 3: đọc một chương
-	// P5: Mặc định đọc chương 1 khi không chỉ định chapter/from/to, tránh lỗi không cần thiết.
+	// P5 + P6: mặc định đọc chương hiện tại khi không chỉ định chapter/from/to
 	if a.Chapter <= 0 && a.From <= 0 && a.To <= 0 {
 		a.Chapter = 1
+		// P6: thử detect chương đang viết từ store
+		if t.store != nil {
+			if prog, err := t.store.Progress.Load(); err == nil && prog != nil {
+				if prog.CurrentChapter > 0 {
+					a.Chapter = prog.CurrentChapter
+				}
+			}
+		}
+		slog.Info("read_chapter: auto-fill chapter", "module", "tool", "chapter", a.Chapter)
 	}
 	if a.Chapter <= 0 {
 		return nil, fmt.Errorf("chapter is required")

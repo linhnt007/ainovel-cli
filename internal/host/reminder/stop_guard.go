@@ -29,10 +29,20 @@ func NewStopGuard(st *store.Store, onBlock func(reason string, consecutive int32
 	lastBlockTurn.Store(-1)
 	return func(_ context.Context, info agentcore.StopInfo) agentcore.StopDecision {
 		progress, _ := st.Progress.Load()
-		if progress != nil && progress.Phase == domain.PhaseComplete {
-			consecutive.Store(0)
-			lastBlockTurn.Store(-1)
-			return agentcore.StopDecision{Allow: true}
+		if progress != nil {
+			if progress.Phase == domain.PhaseComplete {
+				consecutive.Store(0)
+				lastBlockTurn.Store(-1)
+				return agentcore.StopDecision{Allow: true}
+			}
+			// Human gate đang chờ: coordinator không có việc gì làm, cho phép end_turn
+			// thay vì block gây loop coordinator → novel_context → block → coordinator → ...
+			if progress.HumanGateFreeze > 0 &&
+				!st.World.HasHumanGateAck(progress.HumanGateFreeze) {
+				consecutive.Store(0)
+				lastBlockTurn.Store(-1)
+				return agentcore.StopDecision{Allow: true}
+			}
 		}
 		// Chỉ tích lũy đếm khi "các turn liền kề liên tiếp bị chặn"; ngược lại coi là vòng mới
 		// (LLM đã thực hiện tool call và có tiến triển, hoặc user inject / resume làm TurnIndex giảm), reset đếm.

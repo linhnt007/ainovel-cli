@@ -186,9 +186,14 @@ func (t *CommitChapterTool) Execute(ctx context.Context, args json.RawMessage) (
 		sum := sha256.Sum256([]byte(content))
 		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
 		if latestCheck == nil {
-			return nil, fmt.Errorf("chương %d chưa chạy kiểm tra nhất quán, vui lòng gọi check_consistency(chapter=%d) trước khi commit: %w", a.Chapter, a.Chapter, errs.ErrToolPrecondition)
-		}
-		if latestCheck.Digest != currentDigest {
+			slog.Info("commit_chapter: auto chạy check_consistency trước khi commit", "module", "commit", "chapter", a.Chapter)
+			if _, err := t.store.Checkpoints.AppendArtifact(
+				domain.ChapterScope(a.Chapter), "consistency_check",
+				fmt.Sprintf("drafts/%02d.draft.md", a.Chapter),
+			); err != nil {
+				return nil, fmt.Errorf("auto check_consistency: %w: %w", errs.ErrStoreWrite, err)
+			}
+		} else if latestCheck.Digest != currentDigest {
 			slog.Warn("bản nháp thay đổi sau check_consistency, tự động re-check", "module", "commit", "chapter", a.Chapter)
 			if _, err := t.store.Checkpoints.AppendArtifact(
 				domain.ChapterScope(a.Chapter), "consistency_check",
@@ -427,9 +432,14 @@ func (t *CommitChapterTool) executeRewriteCommit(
 		sum := sha256.Sum256([]byte(content))
 		currentDigest := "sha256:" + hex.EncodeToString(sum[:])
 		if latestCheck == nil {
-			return nil, fmt.Errorf("chương %d chưa chạy kiểm tra nhất quán, vui lòng gọi check_consistency(chapter=%d) trước khi commit: %w", chapter, chapter, errs.ErrToolPrecondition)
-		}
-		if latestCheck.Digest != currentDigest {
+			slog.Info("commit_chapter: auto chạy check_consistency trước khi commit (rewrite)", "module", "commit", "chapter", chapter)
+			if _, err := t.store.Checkpoints.AppendArtifact(
+				domain.ChapterScope(chapter), "consistency_check",
+				fmt.Sprintf("drafts/%02d.draft.md", chapter),
+			); err != nil {
+				return nil, fmt.Errorf("rewrite: auto check_consistency: %w: %w", errs.ErrStoreWrite, err)
+			}
+		} else if latestCheck.Digest != currentDigest {
 			slog.Warn("rewrite: bản nháp thay đổi sau check_consistency, tự động re-check", "module", "commit", "chapter", chapter)
 			if _, err := t.store.Checkpoints.AppendArtifact(
 				domain.ChapterScope(chapter), "consistency_check",

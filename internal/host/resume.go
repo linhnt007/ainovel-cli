@@ -27,6 +27,28 @@ func buildResumePrompt(store *storepkg.Store) (string, string, error) {
 		return "", "", nil
 	}
 
+	// Fix #1: Phát hiện "output bị xóa nhưng meta còn" — auto-rollback về chương cuối còn trên disk.
+	if missing, merr := store.MissingCompletedChapters(); merr == nil && len(missing) > 0 {
+		// Tìm chương cuối cùng còn tồn tại để rollback về
+		target := 0
+		for i := len(progress.CompletedChapters) - 1; i >= 0; i-- {
+			ch := progress.CompletedChapters[i]
+			if text, err := store.Drafts.LoadChapterText(ch); err == nil && text != "" {
+				target = ch
+				break
+			}
+		}
+		// Rollback progress về chương cuối còn tồn tại
+		if rerr := store.RollbackToChapter(target); rerr != nil {
+			return "", "", fmt.Errorf("auto-rollback do mất chapter: %w", rerr)
+		}
+		// Reload progress sau rollback
+		progress, err = store.Progress.Load()
+		if err != nil || progress == nil {
+			return "", "", nil
+		}
+	}
+
 	if progress.Phase == domain.PhaseOutline {
 		if vols, _ := store.Outline.LoadLayeredOutline(); len(vols) > 0 {
 			progress.Phase = domain.PhaseWriting

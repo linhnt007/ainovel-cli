@@ -105,10 +105,10 @@ func (s *Store) CheckConsistency() []string {
 	if err != nil || progress == nil {
 		return warnings
 	}
-	if n := len(progress.CompletedChapters); n > 0 {
-		lastCh := progress.CompletedChapters[n-1]
-		if text, err := s.Drafts.LoadChapterText(lastCh); err == nil && text == "" {
-			warnings = append(warnings, fmt.Sprintf("progress đánh dấu chương %d đã hoàn thành, nhưng chapters/%02d.md không tồn tại hoặc rỗng", lastCh, lastCh))
+	// Kiểm tra tất cả completed chapters có tồn tại trên disk không
+	for _, ch := range progress.CompletedChapters {
+		if text, err := s.Drafts.LoadChapterText(ch); err == nil && text == "" {
+			warnings = append(warnings, fmt.Sprintf("progress đánh dấu chương %d đã hoàn thành, nhưng chapters/%02d.md không tồn tại hoặc rỗng", ch, ch))
 		}
 	}
 	if progress.Layered && progress.CurrentVolume > 0 && progress.CurrentArc > 0 {
@@ -133,6 +133,22 @@ func (s *Store) CheckConsistency() []string {
 		}
 	}
 	return warnings
+}
+
+// MissingCompletedChapters trả về danh sách chương đã hoàn thành trong progress nhưng không có file trên disk.
+// Dùng để phát hiện "output bị xóa nhưng meta còn" — silent corruption.
+func (s *Store) MissingCompletedChapters() ([]int, error) {
+	progress, err := s.Progress.Load()
+	if err != nil || progress == nil {
+		return nil, err
+	}
+	var missing []int
+	for _, ch := range progress.CompletedChapters {
+		if text, err := s.Drafts.LoadChapterText(ch); err == nil && text == "" {
+			missing = append(missing, ch)
+		}
+	}
+	return missing, nil
 }
 
 // FoundationMissing trả về các mục còn thiếu trong cài đặt nền tảng, theo thứ tự ổn định dùng cho Prompt/Reminder.

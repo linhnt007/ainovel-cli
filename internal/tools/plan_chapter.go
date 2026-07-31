@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/voocel/agentcore/schema"
 	"github.com/voocel/ainovel-cli/internal/domain"
@@ -64,6 +65,15 @@ func (t *PlanChapterTool) Execute(_ context.Context, args json.RawMessage) (json
 			"completed": true,
 			"reason":    fmt.Sprintf("Chương %d đã được lưu hoàn thành, không thể lập kế hoạch lại", plan.Chapter),
 		})
+	}
+	// Auto-redirect: nếu hàng đợi rewrite/polish có chương khác, chuyển sang chương đầu queue
+	if prog, perr := t.store.Progress.Load(); perr == nil && prog != nil {
+		if (prog.Flow == domain.FlowRewriting || prog.Flow == domain.FlowPolishing) && len(prog.PendingRewrites) > 0 {
+			if prog.PendingRewrites[0] != plan.Chapter {
+				slog.Info("plan_chapter: chuyển hướng từ chương sang chương đầu queue", "module", "tool", "from", plan.Chapter, "to", prog.PendingRewrites[0])
+				plan.Chapter = prog.PendingRewrites[0]
+			}
+		}
 	}
 	if err := t.store.Progress.ValidateChapterWork(plan.Chapter); err != nil {
 		return nil, err
